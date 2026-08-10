@@ -7,4 +7,4 @@ run-sharpen: ./a.out
 	./a.out ../images/$(INPUT).ppm ../images/$(OUTPUT).ppm
 
 clean:
-	rm a.out
+	rm a.out 

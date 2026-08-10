@@ -1,6 +1,7 @@
 #include <iostream>
 #include "libppm.h"
 #include <cstdint>
+#include<chrono>
 
 using namespace std;
 
@@ -108,16 +109,36 @@ int main(int argc, char **argv)
 		cout << "usage: ./a.out <path-to-original-image> <path-to-transformed-image>\n\n";
 		exit(0);
 	}
+
+	auto start = std::chrono::steady_clock::now();
 	
 	struct image_t *input_image = read_ppm_file(argv[1]);
+
+	auto read_t = std::chrono::steady_clock::now();
 	
 	struct image_t *smoothened_image = S1_smoothen(input_image);
 	
+	auto smoothen_t = std::chrono::steady_clock::now();
+	
 	struct image_t *details_image = S2_find_details(input_image, smoothened_image);
+	
+	auto details_t = std::chrono::steady_clock::now();
 	
 	struct image_t *sharpened_image = S3_sharpen(input_image, details_image);
 	
+	auto sharpen_t = std::chrono::steady_clock::now();
+	
 	write_ppm_file(argv[2], sharpened_image);
+	
+	auto write_t = std::chrono::steady_clock::now();
+	
+	cout << "Time taken to read the image: " << std::chrono::duration_cast<std::chrono::milliseconds>(read_t - start).count() << " milliseconds" << std::endl;
+	cout << "Time taken to smoothen the image: " << std::chrono::duration_cast<std::chrono::milliseconds>(smoothen_t - read_t).count() << " milliseconds" << std::endl;
+	cout << "Time taken to find details: " << std::chrono::duration_cast<std::chrono::milliseconds>(details_t - smoothen_t).count() << " milliseconds" << std::endl;
+	cout << "Time taken to sharpen the image: " << std::chrono::duration_cast<std::chrono::milliseconds>(sharpen_t - details_t).count() << " milliseconds" << std::endl;
+	cout << "Time taken to write the image: " << std::chrono::duration_cast<std::chrono::milliseconds>(write_t - sharpen_t).count() << " milliseconds" << std::endl;
+	
+	cout << "Total time taken: " << std::chrono::duration_cast<std::chrono::milliseconds>(write_t - start).count() << " milliseconds" << std::endl;
 	
 	return 0;
 }
