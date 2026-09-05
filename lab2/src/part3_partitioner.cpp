@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <string>
 #include <cstdlib>
+#include <cerrno>
 
 using namespace std;
 
@@ -46,7 +47,7 @@ void sigterm_handler(int sig)
 		waitpid(searcher_child_pid, &status, 0);
 	}
 
-	exit(0);
+	_exit(0);
 }
 
 int main(int argc, char **argv)
@@ -56,7 +57,7 @@ int main(int argc, char **argv)
 
 	if(argc != 6)
 	{
-		cout <<"usage: ./partitioner.out <path-to-file> <pattern> <search-start-position> <search-end-position> <max-chunk-size>\nprovided arguments:\n";
+		cout <<"usage: ./part3_partitioner.out <path-to-file> <pattern> <search-start-position> <search-end-position> <max-chunk-size>\nprovided arguments:\n";
 		for(int i = 0; i < argc; i++)
 			cout << argv[i] << "\n";
 		return -1;
@@ -76,34 +77,47 @@ int main(int argc, char **argv)
 		int mid = (search_start_position + search_end_position) / 2;
 
 		pid_t left_pid = fork();
+		if (left_pid < 0)
+		{
+			perror("fork");
+			return -1;
+		}
 		if (left_pid == 0)
 		{
 			// Child runs the same executable
-			execlp(argv[0], argv[0], file_to_search_in, pattern_to_search_for, to_string(search_start_position).c_str(), to_string(mid).c_str(), to_string(max_chunk_size).c_str(), NULL);
+			execlp(argv[0], argv[0], file_to_search_in, pattern_to_search_for, to_string(search_start_position).c_str(), to_string(mid).c_str(), to_string(max_chunk_size).c_str(), nullptr);
 			exit(1);
 		}
 		left_child_pid = left_pid;
 		cout << "[" << my_pid << "] forked left child " << left_pid << "\n";
 
 		pid_t right_pid = fork();
+		if (right_pid < 0)
+		{
+			perror("fork");
+			return -1;
+		}
 		if (right_pid == 0)
 		{
 			// Child runs the same executable
-			execlp(argv[0], argv[0], file_to_search_in, pattern_to_search_for, to_string(mid + 1).c_str(), to_string(search_end_position).c_str(), to_string(max_chunk_size).c_str(), NULL);
+			execlp(argv[0], argv[0], file_to_search_in, pattern_to_search_for, to_string(mid + 1).c_str(), to_string(search_end_position).c_str(), to_string(max_chunk_size).c_str(), nullptr);
 			exit(1);
 		}
 		right_child_pid = right_pid;
 		cout << "[" << my_pid << "] forked right child " << right_pid << "\n";
 
-		int status;
+		int status = 0;
 		int left_exit = 0, right_exit = 0;
-		for (int i = 0; i < 2; i++)
+		int reaped = 0;
+		while (reaped < 2)
 		{
 			pid_t returned_pid = wait(&status);
 			if (returned_pid < 0)
 			{
+				if (errno == ECHILD) break;
 				continue;
 			}
+			reaped++;
 			int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 0;
 			if (returned_pid == left_pid)
 			{
@@ -143,15 +157,20 @@ int main(int argc, char **argv)
 	else
 	{
 		pid_t searcher_pid = fork();
+		if (searcher_pid < 0)
+		{
+			perror("fork");
+			return -1;
+		}
 		if (searcher_pid == 0)
 		{
-			execlp("./part3_searcher.out", "./part3_searcher.out", file_to_search_in, pattern_to_search_for, to_string(search_start_position).c_str(), to_string(search_end_position).c_str(), NULL);
+			execlp("./part3_searcher.out", "./part3_searcher.out", file_to_search_in, pattern_to_search_for, to_string(search_start_position).c_str(), to_string(search_end_position).c_str(), nullptr);
 			exit(1);
 		}
 		searcher_child_pid = searcher_pid;
 		cout << "[" << my_pid << "] forked searcher child " << searcher_pid << "\n";
 
-		int status;
+		int status = 0;
 		waitpid(searcher_pid, &status, 0);
 		cout << "[" << my_pid << "] searcher child returned\n";
 		searcher_child_pid = 0;
