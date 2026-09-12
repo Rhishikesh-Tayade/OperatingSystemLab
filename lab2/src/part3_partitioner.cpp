@@ -52,8 +52,12 @@ void sigterm_handler(int sig)
 
 int main(int argc, char **argv)
 {
-	// Register SIGTERM handler
-	signal(SIGTERM, sigterm_handler);
+	// Register SIGTERM handler using sigaction (POSIX-standard, no handler reset)
+	struct sigaction sa;
+	sa.sa_handler = sigterm_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART;  // auto-restart wait() if interrupted by non-lethal signal
+	sigaction(SIGTERM, &sa, NULL);
 
 	if(argc != 6)
 	{

@@ -15,8 +15,12 @@ void sigterm_handler(int sig)
 
 int main(int argc, char **argv)
 {
-	// Register SIGTERM handler
-	signal(SIGTERM, sigterm_handler);
+	// Register SIGTERM handler using sigaction (POSIX-standard, no handler reset)
+	struct sigaction sa;
+	sa.sa_handler = sigterm_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGTERM, &sa, NULL);
 
 	if (argc != 5)
 	{
