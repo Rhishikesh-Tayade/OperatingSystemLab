@@ -22,7 +22,20 @@ int main(int argc, char **argv)
 	int search_end_position = atoi(argv[4]);
 
 	//TODO
+	ifstream file(file_to_search_in);
+	file.seekg(search_start_position);
+
+	int length = search_end_position - search_start_position + 1;
+	string content(length, '\0');
+	file.read(&content[0], length);
 	
-	cout << "[-1] didn't find\n";
+	size_t pos = content.find(pattern_to_search_for);
+	if (pos != string::npos)
+	{
+		cout << "[" << getpid() << "] found at " << (search_start_position + pos) << "\n";
+		return 1;
+	}
+
+	cout << "[" << getpid() << "] didn't find\n";
 	return 0;
 }

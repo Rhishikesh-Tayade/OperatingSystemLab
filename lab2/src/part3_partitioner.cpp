@@ -51,7 +51,6 @@ void sigterm_handler(int sig)
 
 int main(int argc, char **argv)
 {
-	// Register SIGTERM handler
 	signal(SIGTERM, sigterm_handler);
 
 	if(argc != 6)
@@ -78,7 +77,6 @@ int main(int argc, char **argv)
 		pid_t left_pid = fork();
 		if (left_pid == 0)
 		{
-			// Child runs the same executable
 			execlp(argv[0], argv[0], file_to_search_in, pattern_to_search_for, to_string(search_start_position).c_str(), to_string(mid).c_str(), to_string(max_chunk_size).c_str(), NULL);
 			exit(1);
 		}
@@ -88,7 +86,6 @@ int main(int argc, char **argv)
 		pid_t right_pid = fork();
 		if (right_pid == 0)
 		{
-			// Child runs the same executable
 			execlp(argv[0], argv[0], file_to_search_in, pattern_to_search_for, to_string(mid + 1).c_str(), to_string(search_end_position).c_str(), to_string(max_chunk_size).c_str(), NULL);
 			exit(1);
 		}
@@ -109,7 +106,7 @@ int main(int argc, char **argv)
 			{
 				cout << "[" << my_pid << "] left child returned\n";
 				left_exit = exit_code;
-				left_child_pid = 0; // Completed
+				left_child_pid = 0; 
 				if (left_exit == 1)
 				{
 					if (right_child_pid > 0)
@@ -125,8 +122,8 @@ int main(int argc, char **argv)
 			{
 				cout << "[" << my_pid << "] right child returned\n";
 				right_exit = exit_code;
-				right_child_pid = 0; // Completed
-				if (right_exit == 1)
+				right_child_pid = 0; 
+				if (right_exit == 1)  
 				{
 					if (left_child_pid > 0)
 					{

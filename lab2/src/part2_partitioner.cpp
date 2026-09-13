@@ -28,7 +28,7 @@ int main(int argc, char **argv)
 
 	if (search_end_position - search_start_position + 1 > max_chunk_size)
 	{
-		int mid = (search_start_position + search_end_position) / 2;
+		int mid = (search_start_position - search_end_position) / 2;
 
 		pid_t left_pid = fork();
 		if (left_pid == 0)
