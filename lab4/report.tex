@@ -117,6 +117,7 @@ The simulated architecture models a 32-bit virtual memory subsystem adhering to 
 \centering
 \caption{Architectural and Latency Simulation Parameters}
 \label{tab:system_params}
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{llr}
 \toprule
 \textbf{Parameter} & \textbf{Architectural Description} & \textbf{Value} \\
@@ -132,7 +133,8 @@ Main Memory Access Latency & Latency per physical memory access / walk step & 20
 Disk Transfer Latency & Page fault servicing latency (disk I/O) & 20,000,000 Cycles \\
 Data / Instruction Caches & Level-1/2/3 processor caching & None (bypassed) \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \subsection{Address Translation Decomposition}
@@ -220,6 +222,7 @@ Table~\ref{tab:part1_results} details the empirical results obtained across four
 \centering
 \caption{Part I Empirical Results (Single-Level Flat Page Table)}
 \label{tab:part1_results}
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lrrrrr}
 \toprule
 \textbf{Benchmark} & \textbf{Total Accesses} & \textbf{Frames Used} & \textbf{PT Allocated} & \textbf{PT Utilized (\%)} & \textbf{Execution Cycles} \\
@@ -229,7 +232,8 @@ Table~\ref{tab:part1_results} details the empirical results obtained across four
 \texttt{lbm} & 12,843,431 & 2,131 & 1,048,576 & 0.2032\% & 5,137,372,400 \\
 \texttt{x264} & 11,721,344 & 234 & 1,048,576 & 0.0223\% & 4,688,537,600 \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \noindent\textbf{Observations on Memory Inefficiency:}
@@ -328,18 +332,20 @@ Table~\ref{tab:part2_comparison} compares the space and time characteristics bet
 \centering
 \caption{Comparison: Single-Level (Part I) vs.\ Two-Level (Part II) Page Tables}
 \label{tab:part2_comparison}
-\begin{tabular}{lrrrrrr}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrcc}
 \toprule
-\textbf{Benchmark} & \multicolumn{2}{c}{\textbf{PT Allocated Entries}} & \textbf{Space} & \multicolumn{2}{c}{\textbf{PT Utilization (\%)}} & \textbf{Hash Match} \\
+\textbf{Benchmark} & \multicolumn{2}{c}{\textbf{PT Allocated Entries}} & \textbf{Space} & \multicolumn{2}{c}{\textbf{PT Utilization}} & \textbf{Verification Hash} \\
 \cmidrule(lr){2-3} \cmidrule(lr){5-6}
-& \textbf{Single-Level} & \textbf{Two-Level} & \textbf{Saved (\%)} & \textbf{Single} & \textbf{Two-Level} & ($H_{\text{I}} \equiv H_{\text{II}}$) \\
+& \textbf{Single-Level} & \textbf{Two-Level} & \textbf{Saved (\%)} & \textbf{Single (\%)} & \textbf{Two-Level (\%)} & ($H_{\text{I}} \equiv H_{\text{II}}$) \\
 \midrule
-\texttt{gcc} & 1,048,576 & 72,704 & \textbf{93.07\%} & 0.09\% & \textbf{1.36\%} & \texttt{0x877B8D023205F027} \checkmark \\
-\texttt{mcf} & 1,048,576 & 14,336 & \textbf{98.63\%} & 0.15\% & \textbf{11.14\%} & \texttt{0x4F2515453ABE2E70} \checkmark \\
-\texttt{lbm} & 1,048,576 & 7,168 & \textbf{99.32\%} & 0.20\% & \textbf{29.73\%} & \texttt{0xB17BA1682364BC09} \checkmark \\
-\texttt{x264} & 1,048,576 & 12,288 & \textbf{98.83\%} & 0.02\% & \textbf{1.90\%} & \texttt{0x3A147A0CD8995E93} \checkmark \\
+\texttt{gcc} & 1,048,576 & 72,704 & \textbf{93.07\%} & 0.0944\% & \textbf{1.3617\%} & \texttt{0x877B8D023205F027} \checkmark \\
+\texttt{mcf} & 1,048,576 & 14,336 & \textbf{98.63\%} & 0.1523\% & \textbf{11.1398\%} & \texttt{0x4F2515453ABE2E70} \checkmark \\
+\texttt{lbm} & 1,048,576 & 7,168 & \textbf{99.32\%} & 0.2032\% & \textbf{29.7294\%} & \texttt{0xB17BA1682364BC09} \checkmark \\
+\texttt{x264} & 1,048,576 & 12,288 & \textbf{98.83\%} & 0.0223\% & \textbf{1.9043\%} & \texttt{0x3A147A0CD8995E93} \checkmark \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \begin{figure}[h]
@@ -420,6 +426,7 @@ Table~\ref{tab:part3_results} presents the empirical TLB performance and cycle r
 \centering
 \caption{Part III Results: TLB Hit Rates and Execution Cycle Comparison}
 \label{tab:part3_results}
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lrrrrr}
 \toprule
 \textbf{Benchmark} & \textbf{TLB Hits} & \textbf{TLB Misses} & \textbf{Hit Rate (\%)} & \textbf{Cycles (Single + TLB)} & \textbf{Cycles (Two-Level + TLB)} \\
@@ -429,7 +436,8 @@ Table~\ref{tab:part3_results} presents the empirical TLB performance and cycle r
 \texttt{lbm} & 12,840,727 & 2,704 & \textbf{99.9789\%} & 2,582,070,431 & 2,582,611,231 \\
 \texttt{x264} & 11,717,345 & 3,999 & \textbf{99.9659\%} & 2,356,789,944 & 2,357,589,744 \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \begin{figure}[h]
@@ -523,6 +531,7 @@ Table~\ref{tab:part4_results} records the behavior of the \texttt{gcc} benchmark
 \centering
 \caption{Part IV Results: Memory Constriction, Page Faults, and Execution Slowdown on \texttt{gcc}}
 \label{tab:part4_results}
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lrrrrr}
 \toprule
 \textbf{Memory Ratio} & \textbf{Physical Frames} & \textbf{Page Faults} & \textbf{Fault Rate (\%)} & \textbf{Execution Cycles} & \textbf{Slowdown} \\
@@ -532,7 +541,8 @@ $0.25$ (1 GB) & 262,144 & 0 & 0.000000\% & 2,509,943,906 & $1.00\times$ \\
 $0.0005$ ($\approx 2.1$ MB) & 524 & 1,634 & 0.013100\% & 35,189,943,906 & \textbf{14.02$\times$} \\
 $0.0002$ ($\approx 856$ KB) & 209 & 6,693 & 0.053659\% & 136,369,943,906 & \textbf{54.33$\times$} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \begin{figure}[h]
@@ -615,6 +625,7 @@ Table~\ref{tab:part5_timing} summarizes the execution time and throughput on an 
 \centering
 \caption{Part V Simulator Wall-Clock Performance and Throughput}
 \label{tab:part5_timing}
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lrrr}
 \toprule
 \textbf{Benchmark Trace} & \textbf{Total Trace Entries} & \textbf{Wall-Clock Time (s)} & \textbf{Throughput (Million Accesses/s)} \\
@@ -624,7 +635,8 @@ Table~\ref{tab:part5_timing} summarizes the execution time and throughput on an 
 \texttt{lbm} & 12,843,431 & 2.77 s & \textbf{4.63 M accesses/s} \\
 \texttt{x264} & 11,721,344 & 2.28 s & \textbf{5.14 M accesses/s} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 The simulator consistently achieves processing throughputs between \textbf{4.36 and 5.14 million memory accesses per second}, enabling multi-million-access trace files to be simulated in under three seconds.
