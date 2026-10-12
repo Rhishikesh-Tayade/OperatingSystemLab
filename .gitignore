@@ -5,3 +5,9 @@
 /lab1/cs24bt041_cs24bt055_lab1.zip
 /lab2/src/file.txt
 /lab2/src/*.out
+
+# Lab 4
+/lab4/memory_access_traces_cpu2017/
+/lab4/simulator
+/lab4/obj/
+/lab4/*.zip

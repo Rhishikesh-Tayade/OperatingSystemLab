@@ -1,0 +1,45 @@
+# ==========================================
+# Large Trace Datasets (>100MB each, exceeds Git/GitHub limit)
+# ==========================================
+memory_access_traces_cpu2017/
+*.trace
+*memoryTrace.txt
+
+# ==========================================
+# Build Artifacts & Compiled Binaries
+# ==========================================
+obj/
+*.o
+simulator
+simulator.exe
+*.out
+*.exe
+
+# ==========================================
+# LaTeX Temporary / Build Artifacts
+# ==========================================
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+
+# ==========================================
+# IDE & System Files
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Submission Archives
+# ==========================================
+*.zip
+*.tar.gz
