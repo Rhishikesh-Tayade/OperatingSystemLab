@@ -48,6 +48,7 @@ void TwoLevelPageTable::map(uint32_t vpn, uint32_t frame) {
 }
 
 void TwoLevelPageTable::unmap(uint32_t vpn) {
+    if (vpn >= NUM_PAGES) return;
     uint32_t l1_idx = (vpn >> 10) & 0x3FF;
     uint32_t l2_idx = vpn & 0x3FF;
 
@@ -58,6 +59,7 @@ void TwoLevelPageTable::unmap(uint32_t vpn) {
 } 
 
 void TwoLevelPageTable::set_dirty(uint32_t vpn, bool dirty) {
+    if (vpn >= NUM_PAGES) return;
     uint32_t l1_idx = (vpn >> 10) & 0x3FF;
     uint32_t l2_idx = vpn & 0x3FF;
 
@@ -67,6 +69,7 @@ void TwoLevelPageTable::set_dirty(uint32_t vpn, bool dirty) {
 }
 
 bool TwoLevelPageTable::is_valid(uint32_t vpn) const {
+    if (vpn >= NUM_PAGES) return false;
     uint32_t l1_idx = (vpn >> 10) & 0x3FF;
     uint32_t l2_idx = vpn & 0x3FF;
 
@@ -75,6 +78,7 @@ bool TwoLevelPageTable::is_valid(uint32_t vpn) const {
 }
 
 bool TwoLevelPageTable::is_dirty(uint32_t vpn) const {
+    if (vpn >= NUM_PAGES) return false;
     uint32_t l1_idx = (vpn >> 10) & 0x3FF;
     uint32_t l2_idx = vpn & 0x3FF;
 

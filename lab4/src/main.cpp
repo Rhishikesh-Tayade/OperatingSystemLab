@@ -300,6 +300,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (part == 4 && (!(mem_ratio > 0.0) || mem_ratio > 1.0)) {
+        cerr << "Error: --mem-ratio must be in (0, 1], got " << mem_ratio << "\n";
+        return 1;
+    }
+
     TraceParser parser(trace_file);
     if (!parser.is_open()) {
         cerr << "Error: cannot open trace file: " << trace_file << "\n";

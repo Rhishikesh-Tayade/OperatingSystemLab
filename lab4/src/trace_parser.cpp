@@ -1,6 +1,38 @@
 #include"trace_parser.hpp"
 #include<iostream>
+#include<cctype>
 using namespace std;
+
+// Parses one <address> field: hexadecimal when 0x/0X-prefixed, decimal
+// otherwise. Rejects a token that is not entirely a valid number. Addresses
+// wider than 32 bits are masked, as the specification mandates.
+static bool parse_address(const string& token, uint32_t& out) {
+    size_t i = 0;
+    while (i < token.size() && isspace(static_cast<unsigned char>(token[i]))) ++i;
+    if (i == token.size()) return false;
+
+    int base = 10;
+    if (token.size() - i > 2 && token[i] == '0' &&
+        (token[i + 1] == 'x' || token[i + 1] == 'X')) {
+        base = 16;
+        i += 2;
+    }
+    if (i == token.size()) return false;
+
+    uint64_t value = 0;
+    for (; i < token.size(); ++i) {
+        const char c = token[i];
+        int digit;
+        if (c >= '0' && c <= '9')                  digit = c - '0';
+        else if (base == 16 && c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+        else if (base == 16 && c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+        else return false;
+        value = value * static_cast<uint64_t>(base) + static_cast<uint64_t>(digit);
+    }
+
+    out = static_cast<uint32_t>(value & 0xFFFFFFFFULL);
+    return true;
+}
 
 TraceParser::TraceParser(const string& filename) : filename(filename) {
     file.open(filename);   
@@ -23,13 +55,12 @@ bool TraceParser::next(TraceEntry& entry) {
         size_t second_comma = line.find(',', first_comma+1);
         if(second_comma == string::npos) continue;
 
-        try{
-            uint64_t raw_addr = stoull(line.substr(0, first_comma), nullptr, 0);
-            entry.address = static_cast<uint32_t>(raw_addr & 0xFFFFFFFF);
-            entry.type = line[first_comma+1];
-            entry.rw = line[second_comma+1];
-            return true;
-        } catch (...){ continue; }
+        uint32_t addr = 0;
+        if(!parse_address(line.substr(0, first_comma), addr)) continue;
+        entry.address = addr;
+        entry.type = line[first_comma+1];
+        entry.rw = line[second_comma+1];
+        return true;
     }
     return false;
 }

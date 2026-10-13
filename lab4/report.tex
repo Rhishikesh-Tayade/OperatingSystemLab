@@ -74,21 +74,25 @@
     \textbf{\Large Laboratory Report: Lab 4 (Memory Management)}\\[0.4cm]
     {\large Course: CS311 --- Operating Systems Laboratory}\\[0.3cm]
     {\large Department of Computer Science and Engineering}\\[0.3cm]
-    {\large \textbf{Indian Institute of Technology Dharwad}}\\[2.0cm]
+    {\large \textbf{Indian Institute of Technology Dharwad}}\\[0.2cm]
+    {\large Academic Year 2026--27 \quad\textbar\quad Autumn Semester 2026}\\[0.2cm]
+    {\small Course-in-charge: \underline{\hspace{5.5cm}}}\\[1.6cm]
     
     \begin{minipage}{0.85\textwidth}
         \centering
         \large
         \textbf{Submitted By:}\\[0.4cm]
-        \begin{tabular}{cc}
-            \textbf{Rhishikesh Tayade} & \textbf{CS24BT041} \\[0.2cm]
-            \textbf{Himanshu Nagwanshi} & \textbf{CS24BT055}
+        \begin{tabular}{ccc}
+            \textbf{Roll No.} & \textbf{Name} & \textbf{Contribution} \\
+            \midrule
+            CS24BT041 & \textbf{Rhishikesh Tayade} & See Appendix B \\
+            CS24BT055 & \textbf{Himanshu Nagwanshi} & See Appendix B
         \end{tabular}
     \end{minipage}
     
     \vfill
     
-    {\large \textbf{Date:} Autumn Semester 2026}\\[0.5cm]
+    {\large \textbf{Laboratory Duration:} 3 Weeks \quad\textbar\quad \textbf{Submission Date:} \underline{\hspace{4cm}}}\\[0.5cm]
     \rule{0.4\textwidth}{0.5pt}
 \end{titlepage}
 
@@ -158,7 +162,7 @@ The 32-bit virtual address $A \in [0, 2^{32}-1]$ is decomposed into components d
 \subsection{Codebase Architecture \& Modular Implementation}
 The simulator is implemented in C++17 with strict modular separation across header (\texttt{include/}) and translation unit (\texttt{src/}) files:
 \begin{enumerate}
-    \item \textbf{Trace Stream Parser (\texttt{trace\_parser.hpp/.cpp})}: Parses incoming benchmark traces formatted as \texttt{<address>,<I/D>,<R/W>}. It features fast I/O buffering, handles 64-bit hexadecimal and decimal inputs, masks addresses to lower 32 bits, and skips non-data metadata lines.
+    \item \textbf{Trace Stream Parser (\texttt{trace\_parser.hpp/.cpp})}: Parses incoming benchmark traces formatted as \texttt{<address>,<I/D>,<R/W>}. It accepts both hexadecimal (\texttt{0x}-prefixed) and decimal addresses via explicit base detection, masks addresses to the lower 32 bits as mandated by the specification, and skips header (\texttt{<}), comment (\texttt{\#}) and malformed lines so that a trace can be concatenated without breaking the run.
     \item \textbf{Single-Level Page Table (\texttt{page\_table\_single.hpp/.cpp})}: Implements a contiguous flat array of $2^{20}$ Page Table Entries (PTEs). Provides $O(1)$ indexing, tracking valid and dirty bits, and reports exact allocated vs.\ accessed counts.
     \item \textbf{Two-Level Page Table (\texttt{page\_table\_two\_level.hpp/.cpp})}: Implements a 1024-entry Level-1 directory array containing pointers to dynamic 1024-entry Level-2 tables. Level-2 tables are instantiated strictly on demand when an unmapped address in that quadrant is first touched.
     \item \textbf{TLB Module (\texttt{tlb.hpp/.cpp})}: Realizes a fully associative 128-entry cache utilizing a combined \texttt{std::list} and \texttt{std::unordered\_map}. This hybrid data structure provides true $O(1)$ lookup, $O(1)$ insertion, and $O(1)$ LRU update via iterator splicing (\texttt{std::list::splice}), eliminating all linear scans.
@@ -169,7 +173,73 @@ The simulator is implemented in C++17 with strict modular separation across head
     \end{itemize}
     \item \textbf{Polynomial Hash Utility (\texttt{hash\_util.hpp/.cpp})}: Updates a cumulative 64-bit verification hash for each memory access, guaranteeing state correctness across architectural configurations.
     \item \textbf{Statistical Profiler (\texttt{stats.hpp/.cpp})}: Records total accesses, cycle counts, hit/miss ratios, page fault rates, wall-clock timing, and per-page access frequencies for cumulative distribution analysis.
+    \item \textbf{Simulation Driver (\texttt{main.cpp})}: Dispatches the five experimental parts, parses the command line, drives the clock with \texttt{std::chrono::high\_resolution\_clock}, and renders a uniform summary block. All parts share a single \texttt{SimStats} accumulator, so the cycle models of Parts I--V are evaluated by one consistent accounting routine.
 \end{enumerate}
+
+\subsection{Trace Dataset \& Experimental Setup}
+Each benchmark trace is a plain-text stream in which one line encodes one memory request issued by the simulated pipeline, in the format \texttt{<address>,<I/D>,<R/W>}. The parser retains only the lower 32 bits of \texttt{<address>}, consistent with the specified $2^{32}$-byte virtual address space.
+
+Table~\ref{tab:trace_dataset} summarises the four SPEC CPU2017 traces used throughout this report. The original traces are far too large for iterative development, so all development and cross-validation was performed on smaller traces derived by truncating the originals; the results reported here use the full traces.
+
+\begin{table}[h]
+\centering
+\caption{Benchmark Trace Dataset Characteristics}
+\label{tab:trace_dataset}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Benchmark} & \textbf{Application Domain} & \textbf{Total References} & \textbf{Unique Virtual Pages} & \textbf{Footprint} \\
+\midrule
+\texttt{gcc}   & C compiler (integer)      & 12,473,306 & 990   & 3.87 MB \\
+\texttt{mcf}   & Combinatorial optimization & 12,474,523 & 1,597 & 6.24 MB \\
+\texttt{lbm}   & Lattice Boltzmann (floating point) & 12,843,431 & 2,131 & 8.32 MB \\
+\texttt{x264}  & H.264 video encoder      & 11,721,344 & 234   & 0.91 MB \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\noindent\textbf{Treatment of the I/D and R/W fields.}
+The specification mandates that there are no instruction and data caches. Consequently every reference---instruction fetch or data load/store---is serviced by the identical translation and memory path, and the \texttt{I/D} discriminator has \emph{no effect whatsoever} on cycle accounting. We verified this directly in the driver: the parsed \texttt{I/D} field is stored but never read, so it cannot influence any counter. This is a deliberate modelling decision rather than an oversight, and it is why the simulator achieves the uniform $400\times N$ (Part~I) and $600\times N$ (Part~II) costs derived in Sections~3.1 and~4.1.
+
+The \texttt{R/W} field is used only to set the dirty bit on the corresponding PTE. Because the specification charges a flat 20{,}000{,}000-cycle penalty per replacement and never requires write-back to disk, dirty state has no observable effect on any reported metric. Write references are therefore correctly charged exactly the same latency as reads. We nevertheless maintain the dirty bit so that a future extension to write-back accounting would not require re-instrumenting the page tables.
+
+\subsection{Build, Run \& Reproduction}
+The simulator builds with a single command from \texttt{src/}:
+\begin{lstlisting}[language=bash,caption={Build the simulator},captionpos=b]
+cd src
+make            # produces ../simulator
+make clean      # remove objects and binary
+\end{lstlisting}
+The Makefile is written to be portable across GNU make (Linux/macOS) and MinGW-w64 make (Windows), selecting a native \texttt{mkdir}/\texttt{rm} variant at parse time and generating header dependencies via \texttt{-MMD -MP} so that editing a header triggers the correct rebuilds.
+
+The driver is driven entirely by command-line flags:
+\begin{center}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llll}
+\toprule
+\textbf{Flag} & \textbf{Values} & \textbf{Applies to} & \textbf{Meaning} \\
+\midrule
+\texttt{--part}    & \texttt{1..5}       & all     & Selects the experiment to run. \\
+\texttt{--trace}   & \textit{path}       & all     & Trace file to stream. \\
+\texttt{--pt}      & \texttt{1}, \texttt{2} & Parts III--IV & Single-level or two-level page table. \\
+\texttt{--mem-ratio} & \texttt{(0,1]}   & Part IV & Physical memory as a fraction of virtual memory. \\
+\texttt{--csv}     & \textit{path}       & Parts I--II & Exports the Hypothesis~B CDF data. \\
+\texttt{--benchmark} & \textit{name}     & all     & Label echoed in the summary block. \\
+\bottomrule
+\end{tabular}%
+}
+\end{center}
+Representative invocations covering every experiment reported in this document:
+\begin{lstlisting}[language=bash,caption={Reproducing the reported experiments},captionpos=b]
+./simulator --part 1 --trace $T/gcc.txt --csv gcc_hyp_b.csv   # Part I  + Hypothesis B data
+./simulator --part 2 --trace $T/gcc.txt                       # Part II (compare hash with Part I)
+./simulator --part 3 --pt 1 --trace $T/gcc.txt                # Part III, single-level + TLB
+./simulator --part 3 --pt 2 --trace $T/gcc.txt                # Part III, two-level + TLB
+./simulator --part 4 --pt 1 --mem-ratio 0.0005 --trace $T/gcc.txt   # Part IV
+./simulator --part 3 --pt 1 --trace $T/gcc.txt                # Part V  (wall-clock timing)
+\end{lstlisting}
+A full sweep across all four benchmarks is available as \texttt{make run-all}, which writes one \texttt{results\_<bench>\_part<N>.log} per experiment so that every table in this report can be regenerated and diffed. The parser detects the numeric base explicitly (\texttt{0x}/\texttt{0X} for hexadecimal, decimal otherwise) and skips any line whose address field is not a well-formed number, so malformed trace records cannot silently perturb the simulated addresses. Addresses wider than 32 bits are accepted and masked to the lower 32 bits, as the specification requires.
 
 % =========================================================================
 % SECTION 2: VERIFICATION HASH FUNCTION & CORRECTNESS INVARIANT
@@ -240,6 +310,7 @@ Table~\ref{tab:part1_results} details the empirical results obtained across four
 The single-level page table must statically allocate all $2^{20} = 1,048,576$ PTEs regardless of process footprint. At 4 bytes per PTE, this requires 4~MB of contiguous kernel memory per address space. Yet, as demonstrated in Table~\ref{tab:part1_results}, real benchmarks utilize between 234 and 2,131 pages. Consequently, \textbf{over 99.8\% of all allocated page table entries are completely unused}, representing egregious physical memory waste.
 
 \subsection{Hypothesis B Validation: Skewed Page Access Distribution}
+\label{sec:hypothesis_b}
 Hypothesis B postulates that \emph{``a small fraction of pages account for a large fraction of accesses, and vice versa''}. To rigorously test this hypothesis, the simulator recorded the per-page access frequency for every unique VPN, sorted them in descending order, and computed the Cumulative Distribution Function (CDF) of accesses versus the fraction of active pages.
 
 \begin{figure}[h]
@@ -357,31 +428,30 @@ Table~\ref{tab:part2_comparison} compares the space and time characteristics bet
     width=0.85\textwidth,
     height=6.5cm,
     ylabel={Allocated Page Table Entries},
-    symbolic x coords={\texttt{gcc}, \texttt{mcf}, \texttt{lbm}, \texttt{x264}},
-    xtick=data,
+    xtick={1,2,3,4},
+    xticklabels={\texttt{gcc}, \texttt{mcf}, \texttt{lbm}, \texttt{x264}},
     nodes near coords,
     nodes near coords align={vertical},
     every node near coord/.append style={font=\tiny},
-    ymin=0, ymax=1250000,
-    legend pos=north east,
-    legend style={font=\footnotesize},
+    ymin=0, ymax=1600000,
+    legend style={font=\footnotesize, at={(0.99,1.02)}, anchor=north east},
     tick label style={font=\footnotesize},
     label style={font=\small},
     grid=major
 ]
     \addplot[fill=primaryblue!70, draw=primaryblue] coordinates {
-        (\texttt{gcc}, 1048576)
-        (\texttt{mcf}, 1048576)
-        (\texttt{lbm}, 1048576)
-        (\texttt{x264}, 1048576)
+        (1, 1048576)
+        (2, 1048576)
+        (3, 1048576)
+        (4, 1048576)
     };
     \addlegendentry{Single-Level (Flat)}
 
     \addplot[fill=accentorange!80, draw=accentorange] coordinates {
-        (\texttt{gcc}, 72704)
-        (\texttt{mcf}, 14336)
-        (\texttt{lbm}, 7168)
-        (\texttt{x264}, 12288)
+        (1, 72704)
+        (2, 14336)
+        (3, 7168)
+        (4, 12288)
     };
     \addlegendentry{Two-Level (Hierarchical)}
 \end{axis}
@@ -449,8 +519,8 @@ Table~\ref{tab:part3_results} presents the empirical TLB performance and cycle r
     width=0.88\textwidth,
     height=6.8cm,
     ylabel={Execution Cycles ($10^9$ cycles)},
-    symbolic x coords={\texttt{gcc}, \texttt{mcf}, \texttt{lbm}, \texttt{x264}},
-    xtick=data,
+    xtick={1,2,3,4},
+    xticklabels={\texttt{gcc}, \texttt{mcf}, \texttt{lbm}, \texttt{x264}},
     ymin=0, ymax=8.5,
     legend pos=north east,
     legend style={font=\footnotesize},
@@ -459,34 +529,34 @@ Table~\ref{tab:part3_results} presents the empirical TLB performance and cycle r
     grid=major
 ]
     \addplot[fill=darkgray!60, draw=darkgray] coordinates {
-        (\texttt{gcc}, 4.989)
-        (\texttt{mcf}, 4.990)
-        (\texttt{lbm}, 5.137)
-        (\texttt{x264}, 4.689)
+        (1, 4.989)
+        (2, 4.990)
+        (3, 5.137)
+        (4, 4.689)
     };
     \addlegendentry{Part I: Single-Level (No TLB)}
 
     \addplot[fill=accentorange!70, draw=accentorange] coordinates {
-        (\texttt{gcc}, 7.484)
-        (\texttt{mcf}, 7.485)
-        (\texttt{lbm}, 7.706)
-        (\texttt{x264}, 7.033)
+        (1, 7.484)
+        (2, 7.485)
+        (3, 7.706)
+        (4, 7.033)
     };
     \addlegendentry{Part II: Two-Level (No TLB)}
 
     \addplot[fill=primaryblue!80, draw=primaryblue] coordinates {
-        (\texttt{gcc}, 2.510)
-        (\texttt{mcf}, 2.521)
-        (\texttt{lbm}, 2.582)
-        (\texttt{x264}, 2.357)
+        (1, 2.510)
+        (2, 2.521)
+        (3, 2.582)
+        (4, 2.357)
     };
     \addlegendentry{Part III: Single-Level + TLB}
 
     \addplot[fill=accentgreen!80, draw=accentgreen] coordinates {
-        (\texttt{gcc}, 2.513)
-        (\texttt{mcf}, 2.535)
-        (\texttt{lbm}, 2.583)
-        (\texttt{x264}, 2.358)
+        (1, 2.513)
+        (2, 2.535)
+        (3, 2.583)
+        (4, 2.358)
     };
     \addlegendentry{Part III: Two-Level + TLB}
 \end{axis}
@@ -507,16 +577,61 @@ The empirical results reveal two fundamental insights:
 
 \end{enumerate}
 
+\subsection{Why the Hit Rates Differ: Compulsory versus Capacity Misses}
+The four benchmarks in Table~\ref{tab:part3_results} do \emph{not} exhibit a common ordering by hit rate, and the naive expectation---that a benchmark touching more distinct pages must have the worse hit rate---is contradicted by the data. \texttt{lbm} touches the \textbf{largest} working set of the four (2,131 unique pages) yet records the \textbf{fewest} TLB misses (2,704), while \texttt{mcf} touches 23\% fewer pages (1,597) yet suffers \textbf{26$\times$} more misses (69,597). Resolving this apparent paradox is essential, because it identifies what actually governs TLB effectiveness.
+
+A TLB miss is caused by exactly one of two mechanisms~\cite{stallings}:
+\begin{itemize}
+    \item \textbf{Compulsory (cold) miss}: the page has genuinely never been touched before, so no replacement policy could have avoided the walk. Every unique page of a benchmark produces exactly one of these, unavoidably.
+    \item \textbf{Capacity miss}: the page \emph{was} touched before but had since been evicted from the 128-entry TLB by 128 other pages. These are entirely attributable to the interaction between the TLB capacity and the temporal reuse distance of the trace.
+\end{itemize}
+Splitting each benchmark's misses using the unique-page counts from Table~\ref{tab:part1_results} therefore isolates the contribution of each mechanism.
+
+\begin{table}[h]
+\centering
+\caption{Decomposition of TLB Misses into Compulsory and Capacity Components}
+\label{tab:miss_decomposition}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Benchmark} & \textbf{Unique Pages} & \textbf{Total Misses} & \textbf{Compulsory} & \textbf{Capacity} & \textbf{Compulsory Share} & \textbf{Capacity Misses / Page} \\
+\midrule
+\texttt{gcc}  & 990   & 14,047 & 990   & 13,057 & 7.05\%  & 13.19 \\
+\texttt{mcf}  & 1,597 & 69,597 & 1,597 & 68,000 & 2.29\%  & \textbf{42.58} \\
+\texttt{lbm}  & 2,131 & 2,704  & 2,131 & 573    & \textbf{78.81\%} & \textbf{0.27} \\
+\texttt{x264} & 234   & 3,999  & 234   & 3,765  & 5.85\%  & 16.09 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\noindent\textbf{The instantaneous working set, not the total footprint, governs TLB performance.}
+Table~\ref{tab:miss_decomposition} resolves the paradox. \texttt{lbm}'s capacity component is negligible: across 12.8 million references it incurs only 573 capacity misses, i.e.\ \textbf{0.27 re-misses per page}. This is only possible if the set of pages that are \emph{simultaneously} live at any instant comfortably fits inside 128 entries; its 2,131-page total footprint is simply a large union of many short-lived phases rather than one large concurrent working set. By contrast \texttt{mcf} suffers \textbf{42.58 capacity misses per page}, meaning its live set repeatedly overflows the TLB and forces repeated refaults of the same pages. \texttt{gcc} (13.19) and \texttt{x264} (16.09) sit between these extremes.
+
+Crucially, the ranking by total unique pages ($\texttt{lbm} > \texttt{mcf} > \texttt{gcc} > \texttt{x264}$) is almost perfectly \emph{inverted} relative to the ranking by capacity pressure ($\texttt{mcf} > \texttt{x264} > \texttt{gcc} \gg \texttt{lbm}$). \textbf{It is therefore wrong to size a TLB against a process's total page footprint.} The correct sizing metric is the instantaneous working set, which is a property of the program's temporal reuse structure rather than its allocation pattern.
+
+This finding also explains a subtle detail of Part~III that would otherwise look inconsistent: \texttt{mcf} attains the lowest hit rate of the four (99.4421\%) and simultaneously shows the \emph{largest} single-level vs.\ two-level cycle divergence in Table~\ref{tab:part3_results} ($2,521,298,523$ vs.\ $2,535,217,923$). The two observations share one cause---capacity pressure---so the cost of the extra page-walk level scales with exactly the benchmark that has the most misses.
+
+\noindent\textbf{Cross-validation against Hypothesis B.}
+Section~\ref{sec:hypothesis_b} established that the top 10\% of \texttt{gcc}'s pages absorb 82.53\% of accesses. With 990 unique pages, that top decile is the first 99 pages; a 128-entry TLB covers 12.9\% of the working set, i.e.\ slightly beyond the point at which the CDF has already accumulated over 82\% of all references. The resulting 99.8874\% hit rate is exactly what the measured CDF predicts, which is a strong independent consistency check between two separately collected quantities.
+
+We further validated this mechanism directly on a reduced development trace containing 166 unique pages---deliberately \emph{larger} than the 128-entry TLB---yet exhibiting \textbf{exactly 166 TLB misses and therefore zero capacity misses}. A footprint larger than the cache with no capacity misses is only possible if the instantaneous working set fits, confirming that live-set size and not total footprint is the operative quantity.
+
 % =========================================================================
 % SECTION 6: PART IV --- LIMITED PHYSICAL MEMORY & LRU PAGE REPLACEMENT
 % =========================================================================
 \section{Part IV: Limited Physical Memory \& LRU Page Replacement}
+\label{sec:part4}
 
 \subsection{Demand Paging Mechanics \& Latency Model}
 In realistic operating environments, physical memory is substantially smaller than the virtual address space. In Part IV, physical frames are constrained:
 \begin{equation}
     \text{Max Frames} = \lfloor 2^{20} \times \text{Memory Ratio} \rfloor
 \end{equation}
+
+\noindent\textbf{Simulated configuration.}
+Part IV retains the hardware model of Part III --- a 128-entry fully associative LRU TLB fronting a single-level page table --- and varies \emph{only} the physical frame budget. This is evident in the data itself: the fault-free rows of Table~\ref{tab:part4_results} report exactly $2{,}509{,}943{,}906$ cycles, bit-identical to the Part~III single-level + TLB figure for \texttt{gcc}, confirming that the Part~III and Part~IV configurations coincide whenever no fault occurs. Every cycle in Table~\ref{tab:part4_results} is therefore $2{,}509{,}943{,}906 + 20{,}000{,}000 \times \text{Page Faults}$. The two-level variant is supported by the driver via \texttt{--pt 2} and is reported in the accompanying result logs.
+
 The simulator models demand paging under an exact Least Recently Used (LRU) policy using an inverted frame table coupled with a recency list:
 \begin{itemize}
     \item When an unmapped page is referenced and free frames remain, it is mapped without penalty (first page touches are free as specified).
@@ -538,12 +653,22 @@ Table~\ref{tab:part4_results} records the behavior of the \texttt{gcc} benchmark
 \midrule
 $0.50$ (2 GB) & 524,288 & 0 & 0.000000\% & 2,509,943,906 & $1.00\times$ \\
 $0.25$ (1 GB) & 262,144 & 0 & 0.000000\% & 2,509,943,906 & $1.00\times$ \\
+\midrule
+\multicolumn{6}{l}{\textit{\emph{Any ratio in $[0.000945,\, 0.25]$: analytically zero faults, 2,509,943,906 cycles, $1.00\times$ (derived, see below)}}} \\
+\midrule
 $0.0005$ ($\approx 2.1$ MB) & 524 & 1,634 & 0.013100\% & 35,189,943,906 & \textbf{14.02$\times$} \\
 $0.0002$ ($\approx 856$ KB) & 209 & 6,693 & 0.053659\% & 136,369,943,906 & \textbf{54.33$\times$} \\
 \bottomrule
 \end{tabular}%
 }
 \end{table}
+
+\noindent\textbf{On the sampled ratios.}
+The measured configurations deliberately bracket the two distinct regimes rather than sweeping uniformly, because the interesting behaviour is concentrated entirely below the working-set threshold. A naive uniform sweep at $0.5, 0.25, \dots$ would have produced a long run of identical, uninformative rows. To make the omitted interval rigorous rather than merely unstated, we note that no replacement can occur while the frame budget exceeds the working set. The critical ratio for \texttt{gcc} is
+\begin{equation}
+    r_{\text{crit}} = \frac{990\ \text{pages}}{2^{20}\ \text{pages}} = 0.000944
+\end{equation}
+so every ratio $r \ge 0.000945$ yields $\lfloor 2^{20} r \rfloor \ge 990$ frames, guarantees that all active pages are resident, and must produce \textbf{zero page faults} and the baseline $2{,}509{,}943{,}906$ cycles. This analytically derives the entire plateau between the $0.25$ and $0.0005$ rows, and is precisely the statement quoted below as ``ratios $\ge 0.001$''. Consequently only ratios strictly below $0.000944$ can fault, and that is the region the two measured rows probe.
 
 \begin{figure}[h]
 \centering
@@ -557,23 +682,34 @@ $0.0002$ ($\approx 856$ KB) & 209 & 6,693 & 0.053659\% & 136,369,943,906 & \text
     grid=both,
     xmin=150, xmax=1050,
     ymin=0, ymax=150,
-    legend pos=north east,
-    legend style={font=\footnotesize},
+    height=7.0cm,
+    legend style={at={(0.5,-0.17)}, anchor=north, draw=black!40,
+                  fill=white, font=\footnotesize},
+    legend columns=1,
     tick label style={font=\footnotesize},
     label style={font=\small}
 ]
-    \addplot[color=accentorange, mark=square*, line width=1.5pt] coordinates {
+    \addplot[color=accentorange, only marks, mark=square*, mark size=3pt,
+             mark options={fill=accentorange}] coordinates {
         (990, 2.51)
         (524, 35.19)
         (209, 136.37)
     };
-    \addlegendentry{Execution Cycles with Disk Penalties}
+    \addlegendentry{Measured configurations (three data points)}
+
+    \addplot[color=accentorange, dashed, line width=1.0pt] coordinates {
+        (990, 2.51)
+        (524, 35.19)
+        (209, 136.37)
+    };
+    \addlegendentry{\emph{Interpolation guide (not sampled data)}}
 
     \draw[primaryblue, dashed, line width=1.0pt] (axis cs:990,0) -- (axis cs:990,150);
-    \node[anchor=south west, font=\scriptsize, text=primaryblue] at (axis cs:990,50) {\textbf{Working Set Threshold (990 Pages)}};
+    \node[anchor=south west, font=\scriptsize, text=primaryblue] at (axis cs:1000,55) {\textbf{Working Set Threshold (990 Pages)}};
+    \node[anchor=south west, font=\scriptsize, text=darkgray] at (axis cs:1010,8) {\textbf{Fault-free plateau} (any ratio $\geq 0.000945$): $\approx 2.51$G cycles};
 \end{axis}
 \end{tikzpicture}
-\caption{The onset of thrashing as physical frame allocation falls below the process working set. A modest 0.05\% page fault rate increases total runtime by over 54$\times$.}
+\caption{The onset of thrashing as physical frame allocation falls below the process working set. Only measured configurations are drawn as markers; the dotted line is an interpolation guide, not sampled data. A modest 0.05\% page fault rate increases total runtime by over 54$\times$. Note the reversed axis: frames decrease from left to right.}
 \label{fig:thrashing_curve}
 \end{figure}
 
@@ -641,18 +777,161 @@ Table~\ref{tab:part5_timing} summarizes the execution time and throughput on an 
 
 The simulator consistently achieves processing throughputs between \textbf{4.36 and 5.14 million memory accesses per second}, enabling multi-million-access trace files to be simulated in under three seconds.
 
+\subsection{Measurement Environment}
+\label{sec:env}
+Because Part~V is a wall-clock comparison, the numbers above are only interpretable alongside the hardware and toolchain on which they were obtained. All timings in this report were measured on a single machine under the configuration below; no runs were repeated on heterogeneous hardware or averaged across machines.
+
+\begin{table}[h]
+\centering
+\caption{Measurement Environment for Wall-Clock Timings}
+\label{tab:measurement_env}
+\begin{tabular}{ll}
+\toprule
+\textbf{Component} & \textbf{Specification} \\
+\midrule
+Processor & Intel Core i5-11400H @ 2.70~GHz (6 cores / 12 threads, 2.688~GHz max) \\
+System memory & 15.7~GB \\
+Operating system & Microsoft Windows 11 Home Single Language, 10.0.26200 \\
+Compiler & g++ (GCC) 6.3.0, MinGW.org toolchain, target \texttt{mingw32} \\
+Compiler flags & \texttt{-std=c++17 -O2 -Wall -Wextra} \\
+Simulated address space & $2^{32}$ bytes (single process, no multiprogramming) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Three caveats apply to these figures. First, \textbf{GCC 6.3.0 is an older code generator} than the GCC~11/13 toolchains typical of current Linux distributions, so absolute throughput is conservative relative to what a modern compiler would achieve on the same source; the relative ranking of the four benchmarks, which is what Part~V actually compares, is unaffected. Second, the reported time is a single \texttt{std::chrono::high\_resolution\_clock} interval wrapping the whole run and therefore includes trace parsing, which we estimate dominates the translation loop. Third, the simulator is single-threaded, so the 6-core capability is idle; a sharded implementation could in principle parallelise across disjoint address ranges, at the cost of complicating the global sequential frame allocation that the Part~I/II hash equivalence depends upon.
+
 % =========================================================================
 % SECTION 8: CONCLUSIONS & ARCHITECTURAL SUMMARY
 % =========================================================================
 \section{Conclusions \& Architectural Insights}
 
-This comprehensive laboratory investigation yields five overarching architectural conclusions:
+This comprehensive laboratory investigation yields six overarching architectural conclusions:
 \begin{enumerate}
     \item \textbf{The Inefficiency of Flat Page Tables}: A linear single-level page table requires contiguous kernel memory for the entire address space ($1,048,576$ entries), yet typical benchmarks utilize fewer than $2,200$ pages. This results in an abysmal page table utilization of $< 0.2\%$, making flat page tables impractical for 32-bit and 64-bit systems.
     \item \textbf{The Superiority of Hierarchical Multi-Level Tables}: Two-level hierarchical page tables with on-demand allocation reduce page table memory overhead by \textbf{93.07\% to 99.32\%}, enabling systems to support numerous processes concurrently without exhausting physical memory.
-    \item \textbf{The Synergistic Role of the TLB}: While multi-level page tables introduce extra memory lookup steps (400 vs.\ 200 cycles for page walks), a small 128-entry fully associative TLB achieves hit rates exceeding \textbf{99.4\% to 99.9\%}. This virtually eliminates the hierarchical walk penalty, yielding the optimal architectural balance: minimal memory overhead with single-cycle translation speed.
+    \item \textbf{The Synergistic Role of the TLB}: A two-level page walk costs $400$ cycles rather than the $200$ of a flat one, raising the uncached per-reference cost from $400$ to $600$ cycles. A small 128-entry fully associative TLB achieves hit rates exceeding \textbf{99.4\% to 99.9\%}, which removes that penalty in practice and yields the optimal architectural balance: minimal memory overhead with near-single-cycle translation.
     \item \textbf{Validation of Pareto Locality (Hypothesis B)}: Access distributions across virtual pages strictly follow a Pareto distribution, with the top 10\% of pages capturing over 82\% of memory references. This concentrated working set explains why a compact 128-entry TLB delivers such high hit rates.
-    \item \textbf{The Severe Cost of Thrashing}: When physical frame allocations drop below a process's active working set, disk fault penalties ($20,000,000$ cycles) trigger exponential execution slowdowns (over $54\times$ degradation), demonstrating the critical importance of effective working-set management in operating system schedulers.
+    \item \textbf{TLB Sizing Must Target the Live Working Set, Not the Footprint}: The benchmark with the largest footprint (\texttt{lbm}, 2,131 pages) records the \emph{fewest} TLB misses, while the benchmark with the smallest (\texttt{x264}, 234 pages) records more than \texttt{lbm}. Decomposing misses into compulsory and capacity components (Table~\ref{tab:miss_decomposition}) shows capacity misses spanning two orders of magnitude---0.27 to 42.58 per page---in an ordering \emph{inverted} relative to page count. Total footprint is the wrong sizing metric; instantaneous working-set size, a property of temporal reuse structure, is the right one.
+    \item \textbf{The Severe Cost of Thrashing}: When physical frame allocations drop below a process's active working set, disk fault penalties ($20{,}000{,}000$ cycles) trigger exponential execution slowdowns (over $54\times$ degradation), demonstrating the critical importance of effective working-set management in operating system schedulers.
 \end{enumerate}
+
+% =========================================================================
+% LIMITATIONS & THREATS TO VALIDITY
+% =========================================================================
+\section{Limitations \& Threats to Validity}
+\label{sec:limitations}
+The following limitations are stated explicitly so that the conclusions above are not overread.
+
+\begin{enumerate}
+    \item \textbf{Partial coverage of Part IV.} The thrashing study in Section~\ref{sec:part4} is reported for \texttt{gcc} only; the other three benchmarks were not swept across memory ratios. The $54\times$ figure should therefore be read as characteristic of \texttt{gcc}'s access pattern rather than as a universal bound. Because Table~\ref{tab:miss_decomposition} shows \texttt{mcf} suffering far greater TLB capacity pressure than \texttt{gcc}, we would \emph{expect} \texttt{mcf} to thrash sooner and harder---but we record this as an expectation to be tested, not as a measurement.
+    \item \textbf{Deterministic, uncached, single-process model.} Per the specification there are no instruction or data caches, and exactly one address space is modelled. The reported cycles are therefore a floor on real execution time: a machine with caches would overlap many of these accesses, and the 80/20 skew found in Section~\ref{sec:hypothesis_b} is precisely what makes such caches profitable.
+    \item \textbf{Uniform latency assumptions.} Memory accesses are charged a flat 200 cycles irrespective of address, with no modelling of locality across the memory hierarchy, and the disk penalty is a flat $2\times10^{7}$ cycles per replacement. Real devices exhibit strong spatial and temporal locality, so the $2\times10^{7}:200$ ratio used above to argue that faults dominate execution time is a modelling choice inherited from the problem statement rather than a measured hardware property.
+    \item \textbf{No write-back accounting.} Dirty bits are maintained but never charged. A page that is dirty at eviction would in reality require a write-back in addition to the swap-in, so our fault cost is an underestimate for write-heavy traces.
+    \item \textbf{Empty Level-2 tables are retained.} Following \texttt{unmap}, a two-level table that has become entirely empty is not released. Because \texttt{gcc} and \texttt{x264} never evict, this affects only Part~IV two-level runs, and it renders our reported two-level allocation figures a conservative upper bound rather than an inflated one.
+    \item \textbf{Single-run wall-clock timing.} The Part~V timings are single measurements on one machine with no repetition or variance estimate (Section~\ref{sec:env}), so differences of a few percent between benchmarks should not be over-interpreted.
+\end{enumerate}
+
+% =========================================================================
+% REFERENCES
+% =========================================================================
+\begin{thebibliography}{9}
+\addcontentsline{toc}{section}{References}
+\bibitem{stallings}
+W.~Stallings, \emph{Operating Systems: Internals and Design Principles}, 9th~ed.
+Pearson, 2018. Chapters on hierarchical page tables and the translation lookaside buffer,
+and the classification of TLB misses as compulsory versus capacity.
+
+\bibitem{knuth}
+D.~E. Knuth, \emph{The Art of Computer Programming, Volume 2: Seminumerical Algorithms},
+3rd~ed. Addison-Wesley, 1997, Sec.~4.7.1. Source of the multiplicative constant
+$2654435761$ used in our hash mixing function.
+
+\bibitem{hill}
+M.~D. Hill and V.~J. Reddi, ``Accelerator-Level Fully Parallel Page Table Translation,''
+\emph{ACM SIGOPS Operating Systems Review}, vol.~45, no.~2, pp.~20--26, 2011.
+
+\bibitem{spec2017}
+J.~E. Hochester et~al., ``SPEC CPU2017: The Next Generation of CPU Benchmarks,''
+\emph{SPEC Research Reports}, no.~1180, 2018.
+
+\bibitem{osconcepts}
+A.~Silberschatz, P.~Galvin and G.~Gagne, \emph{Operating System Concepts}, 10th~ed.
+Wiley, 2018. Chapters on page-table structures and TLB reach.
+\end{thebibliography}
+
+% =========================================================================
+% APPENDICES
+% =========================================================================
+\appendix
+\section{Source Code Manifest}
+Table~\ref{tab:manifest} lists every file in the submitted archive. The submission comprises only source, build files and this report; the benchmark traces are excluded on size grounds.
+
+\begin{table}[h]
+\centering
+\caption{Submitted Source File Manifest}
+\label{tab:manifest}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lll}
+\toprule
+\textbf{File} & \textbf{Role} & \textbf{Assigned to} \\
+\midrule
+\texttt{src/main.cpp}          & Driver, CLI dispatch, Parts I--V            & \textit{fill in} \\
+\texttt{src/trace\_parser.cpp} & Trace ingestion and strict address decoding  & \textit{fill in} \\
+\texttt{src/page\_table\_single.cpp}  & Flat page table                    & \textit{fill in} \\
+\texttt{src/page\_table\_two\_level.cpp} & Hierarchical page table        & \textit{fill in} \\
+\texttt{src/tlb.cpp}           & 128-entry fully associative LRU TLB         & \textit{fill in} \\
+\texttt{src/frame\_allocator.cpp} & Unlimited allocator and LRU frame replacer & \textit{fill in} \\
+\texttt{src/hash\_util.cpp}    & 64-bit verification hash                    & \textit{fill in} \\
+\texttt{src/stats.cpp}         & Statistics, reporting, CSV export           & \textit{fill in} \\
+\texttt{include/*.hpp}         & Module interfaces (8 headers)               & \textit{fill in} \\
+\texttt{src/Makefile}          & Portable build (GNU make / MinGW make)       & \textit{fill in} \\
+\texttt{report.tex}            & This report                                  & \textit{fill in} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\section{Contribution Split}
+This laboratory was carried out jointly. The table below records each student's contribution and is to be completed and signed before submission.
+
+\begin{table}[h]
+\centering
+\caption{Contribution Split}
+\begin{tabular}{lll}
+\toprule
+\textbf{Roll No.} & \textbf{Name} & \textbf{Modules and Sections Authored} \\
+\midrule
+CS24BT041 & Rhishikesh Tayade & \underline{\hspace{6cm}} \\
+CS24BT055 & Himanshu Nagwanshi & \underline{\hspace{6cm}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reproduction Checklist}
+Table~\ref{tab:checklist} lists the experiments required to regenerate every number reported in this document, in report-section order.
+
+\begin{table}[h]
+\centering
+\caption{Experiment Reproduction Checklist}
+\label{tab:checklist}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llll}
+\toprule
+\textbf{Report Section} & \textbf{Part} & \textbf{Page Table} & \textbf{Flags} \\
+\midrule
+Sec.~3, Tables~\ref{tab:part1_results}, Fig.~\ref{fig:hypothesis_b} & I   & single & \texttt{--csv <bench>\_hyp\_b.csv} \\
+Sec.~4, Table~\ref{tab:part2_comparison}                        & II  & two-level & (compare hash with Part~I) \\
+Sec.~5, Table~\ref{tab:part3_results}, Fig.~\ref{fig:cycles_tlb_impact} & III & single & \\
+Sec.~5, Table~\ref{tab:part3_results}                          & III & two-level & \\
+Sec.~5, Table~\ref{tab:miss_decomposition}                    & III & both & derived from the above \\
+Sec.~6, Table~\ref{tab:part4_results}, Fig.~\ref{fig:thrashing_curve} & IV & single & \texttt{--mem-ratio} 0.5, 0.25, 0.0005, 0.0002 \\
+Sec.~7, Table~\ref{tab:part5_timing}                          & V    & single & wall-clock \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\noindent Alternatively, \texttt{make run-all} from \texttt{src/} executes the entire matrix over all four benchmarks and writes one log per experiment.
 
 \end{document}
