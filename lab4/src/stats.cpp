@@ -22,15 +22,15 @@ void SimStats::reset() {
 }
 
 double SimStats::get_tlb_hit_rate() const {
-    return total_accesses ? static_cast<double>(tlb_hits) / total_accesses : 0.0;
+    return total_accesses ? static_cast<double>(tlb_hits) / static_cast<double>(total_accesses) : 0.0;
 }
 
 double SimStats::get_pt_utilization() const {
-    return pt_entries_allocated ? static_cast<double>(pt_entries_accessed) / pt_entries_allocated : 0.0;
+    return pt_entries_allocated ? static_cast<double>(pt_entries_accessed) / static_cast<double>(pt_entries_allocated) : 0.0;
 }
 
 double SimStats::get_page_fault_rate() const {
-    return total_accesses ? static_cast<double>(page_faults) / total_accesses : 0.0;
+    return total_accesses ? static_cast<double>(page_faults) / static_cast<double>(total_accesses) : 0.0;
 }
 
 void SimStats::print_summary(int part_num, const string& benchmark) const {
@@ -92,7 +92,7 @@ void SimStats::export_hypothesis_b_data(const string& output_csv_path) const {
     for (size_t i = 0; i < total_unique_pages; ++i) {
         cumulative_accesses += counts[i];
         double page_frac = static_cast<double>(i + 1) / total_unique_pages;
-        double access_frac = static_cast<double>(cumulative_accesses) / total_accesses;
+        double access_frac = static_cast<double>(cumulative_accesses) / static_cast<double>(total_accesses);
         out << (i + 1) << "," << counts[i] << "," << page_frac << "," << access_frac << "\n";
     }
     out.close();

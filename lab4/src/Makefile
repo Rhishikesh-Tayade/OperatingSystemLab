@@ -22,8 +22,9 @@ else
   EXE   =
 endif
 
-BENCHMARKS = gcc mcf lbm x264
+BENCHMARKS = gcc mcf lbm x264 blender fotonik3d imagick perlbench xalancbmk xz
 TRACE_DIR  = ../memory_access_traces_cpu2017
+RATIOS     = 0.5 0.25 0.1 0.05 0.02 0.01 0.005 0.002 0.001 0.0005 0.0003 0.0002 0.0001
 
 .PHONY: all clean run run-all help
 

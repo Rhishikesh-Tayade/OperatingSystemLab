@@ -3,9 +3,6 @@
 #include<cctype>
 using namespace std;
 
-// Parses one <address> field: hexadecimal when 0x/0X-prefixed, decimal
-// otherwise. Rejects a token that is not entirely a valid number. Addresses
-// wider than 32 bits are masked, as the specification mandates.
 static bool parse_address(const string& token, uint32_t& out) {
     size_t i = 0;
     while (i < token.size() && isspace(static_cast<unsigned char>(token[i]))) ++i;

@@ -43,3 +43,17 @@ Thumbs.db
 # ==========================================
 *.zip
 *.tar.gz
+
+# ==========================================
+# Local Build / Analysis Scaffolding
+# Kept on disk so the report stays reproducible, not committed.
+# ==========================================
+results/
+report.tex
+build.ps1
+make_figs_mpl.py
+parse_sweep.py
+sweep.ps1
+verify.py
+verify4.py
+4_memory_management.pdf
