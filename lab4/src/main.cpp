@@ -209,12 +209,12 @@ void run_part4(TraceParser& parser, SimStats& stats, int pt_type, double mem_rat
             }
 
             if (!is_mapped) {
+                stats.page_faults++;
                 bool page_fault = false;
                 uint32_t victim_vpn = 0;
                 frame = alloc.allocate_frame(vpn, page_fault, victim_vpn);
 
                 if (page_fault) {
-                    stats.page_faults++;
                     stats.total_cycles += 20000000; // 20 million cycles disk access
 
                     // Invalidate victim in page table and TLB
