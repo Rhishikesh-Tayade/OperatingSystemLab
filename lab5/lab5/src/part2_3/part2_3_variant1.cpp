@@ -1,204 +1,199 @@
-// Part 2.3 Variant 1: Shared Memory + Semaphores
-// 3 processes, shared memory via shmget/shmat, POSIX semaphores
-// Pipeline: S1->S2->S3, 1000 iterations
+// Part2_3 Variant1: 3 processes, shared memory, semaphores, variant 1.
+// 1000 linked iterations, pixels stream via two bounded shared queues.
+// Synchronization: ONLY semaphores (full/empty per queue, pshared=1).
+// Order proof: seq in each packet must be 0,1,2,...; consumer verifies.
 #include <iostream>
+#include <fstream>
+#include <vector>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
-#include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <sys/shm.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <semaphore.h>
-#include "../common/libppm.h"
+#include <chrono>
+#include "libppm.h"
 
 using namespace std;
 
-#define NUM_ITERATIONS 1000
-
-// Shared memory layout:
-// [sem_t s1_ready][sem_t s2_ready][sem_t s1_can_write][sem_t s2_can_write]
-// [int width][int height]
-// [uint8_t s1_buffer[H*W*3]]
-// [uint8_t s2_buffer[H*W*3]]
-
-struct shm_header {
-    sem_t s1_ready;     // S1 signals S2 that data is ready
-    sem_t s2_ready;     // S2 signals S3 that data is ready
-    sem_t s1_can_write; // S2 signals S1 that buffer can be overwritten
-    sem_t s2_can_write; // S3 signals S2 that buffer can be overwritten
-    int width;
-    int height;
+struct Packet {
+    int32_t iter;
+    int32_t index;
+    int64_t seq;
+    uint8_t inp[3];
+    uint8_t payload[3];
 };
 
-void S1_smoothen(struct image_t *src, struct image_t *dst)
-{
-    int m = src->height, n = src->width;
-    for(int i = 0; i < m; i++)
-        for(int j = 0; j < n; j++)
-            for(int k = 0; k < 3; k++)
-                dst->image_pixels[i][j][k] = src->image_pixels[i][j][k];
-
-    for(int i = 1; i < m - 1; i++)
-        for(int j = 1; j < n - 1; j++)
-            for(int k = 0; k < 3; k++) {
-                int temp = 0;
-                for(int x = i - 1; x < i + 2; x++)
-                    for(int y = j - 1; y < j + 2; y++)
-                        temp += src->image_pixels[x][y][k];
-                dst->image_pixels[i][j][k] = temp / 9;
-            }
+static inline uint8_t s1_pixel(const uint8_t *inp, int W, int H, int i, int j, int k) {
+    if (i == 0 || i == H - 1 || j == 0 || j == W - 1)
+        return inp[(i * W + j) * 3 + k];
+    int t = 0;
+    for (int x = i - 1; x < i + 2; x++)
+        for (int y = j - 1; y < j + 2; y++)
+            t += inp[(x * W + y) * 3 + k];
+    return (uint8_t)(t / 9);
+}
+static inline uint8_t s2_pixel(uint8_t inp, uint8_t smo) {
+    int diff = (int)inp - (int)smo;
+    return (uint8_t)(int8_t)diff;
+}
+static inline uint8_t s3_pixel(uint8_t inp, uint8_t det) {
+    int v = (int)inp + (int8_t)det;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)v;
 }
 
-void S2_find_details(struct image_t *orig, struct image_t *smooth, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int diff = (int)orig->image_pixels[i][j][k] - (int)smooth->image_pixels[i][j][k];
-                dst->image_pixels[i][j][k] = (uint8_t)(int8_t)diff;
-            }
+const int CAP = 1024;
+struct Shm {
+    sem_t full1, empty1;
+    sem_t full2, empty2;
+    int head1, tail1;
+    int head2, tail2;
+    Packet buf1[1024];
+    Packet buf2[1024];
+};
+
+static void q1_push(Shm *s, const Packet &p) {
+    sem_wait(&s->empty1);
+    s->buf1[s->tail1] = p;
+    s->tail1 = (s->tail1 + 1) % CAP;
+    sem_post(&s->full1);
+}
+static void q1_pop(Shm *s, Packet &p) {
+    sem_wait(&s->full1);
+    p = s->buf1[s->head1];
+    s->head1 = (s->head1 + 1) % CAP;
+    sem_post(&s->empty1);
+}
+static void q2_push(Shm *s, const Packet &p) {
+    sem_wait(&s->empty2);
+    s->buf2[s->tail2] = p;
+    s->tail2 = (s->tail2 + 1) % CAP;
+    sem_post(&s->full2);
+}
+static void q2_pop(Shm *s, Packet &p) {
+    sem_wait(&s->full2);
+    p = s->buf2[s->head2];
+    s->head2 = (s->head2 + 1) % CAP;
+    sem_post(&s->empty2);
 }
 
-void S3_sharpen(struct image_t *orig, struct image_t *details, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int val = (int)orig->image_pixels[i][j][k] + (int8_t)details->image_pixels[i][j][k];
-                if(val < 0) val = 0;
-                if(val > 255) val = 255;
-                dst->image_pixels[i][j][k] = (uint8_t)val;
-            }
-}
+int main(int argc, char **argv) {
+    if (argc != 3) { cout << "usage: ./part2_3_variant1 <input> <output>\n"; return 0; }
+    auto t0 = chrono::steady_clock::now();
+    image_t *img = read_ppm_file(argv[1]);
+    int W = img->width, H = img->height;
+    size_t N = (size_t)W * H;
+    vector<uint8_t> inp(N * 3);
+    for (int i = 0; i < H; i++)
+        for (int j = 0; j < W; j++)
+            for (int k = 0; k < 3; k++)
+                inp[((size_t)i * W + j) * 3 + k] = img->image_pixels[i][j][k];
+    auto t_read = chrono::steady_clock::now();
 
-void image_to_flat_buf(struct image_t *img, uint8_t *buf)
-{
-    int idx = 0;
-    for(int i = 0; i < img->height; i++)
-        for(int j = 0; j < img->width; j++)
-            for(int k = 0; k < 3; k++)
-                buf[idx++] = img->image_pixels[i][j][k];
-}
-
-void flat_buf_to_image(uint8_t *buf, struct image_t *img)
-{
-    int idx = 0;
-    for(int i = 0; i < img->height; i++)
-        for(int j = 0; j < img->width; j++)
-            for(int k = 0; k < 3; k++)
-                img->image_pixels[i][j][k] = buf[idx++];
-}
-
-int main(int argc, char **argv)
-{
-    if(argc != 3) {
-        cout << "usage: ./part2_3_v1 <input.ppm> <output.ppm>" << endl;
-        exit(1);
-    }
-
-    struct image_t *input_image = read_ppm_file(argv[1]);
-    int H = input_image->height, W = input_image->width;
-    int img_size = H * W * 3;
-
-    // Create shared memory
-    size_t shm_size = sizeof(struct shm_header) + 2 * img_size;
-    int shmid = shmget(IPC_PRIVATE, shm_size, IPC_CREAT | 0666);
-    if(shmid < 0) { perror("shmget"); exit(1); }
-
-    void *shm_ptr = shmat(shmid, NULL, 0);
-    if(shm_ptr == (void*)-1) { perror("shmat"); exit(1); }
-
-    struct shm_header *header = (struct shm_header *)shm_ptr;
-    uint8_t *s1_buf = (uint8_t *)shm_ptr + sizeof(struct shm_header);
-    uint8_t *s2_buf = s1_buf + img_size;
-
-    // Initialize semaphores (shared between processes)
-    sem_init(&header->s1_ready, 1, 0);
-    sem_init(&header->s2_ready, 1, 0);
-    sem_init(&header->s1_can_write, 1, 1);  // S1 can write initially
-    sem_init(&header->s2_can_write, 1, 1);  // S2 can write initially
-    header->width = W;
-    header->height = H;
-
-    cout << "=== Part 2.3 Variant 1: Shared Memory + Semaphores ===" << endl;
-    cout << "Image: " << W << "x" << H << ", Iterations: " << NUM_ITERATIONS << endl;
-
-    auto start = chrono::steady_clock::now();
+    char name[64];
+    snprintf(name, sizeof(name), "/oslab5_shm_%ld", (long)getpid());
+    int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (fd < 0) { perror("shm_open"); return 1; }
+    if (ftruncate(fd, sizeof(Shm)) != 0) { perror("ftruncate"); return 1; }
+    Shm *shm = (Shm*)mmap(NULL, sizeof(Shm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shm == MAP_FAILED) { perror("mmap"); return 1; }
+    close(fd);
+    memset(shm, 0, sizeof(Shm));
+    sem_init(&shm->full1, 1, 0);
+    sem_init(&shm->empty1, 1, CAP);
+    sem_init(&shm->full2, 1, 0);
+    sem_init(&shm->empty2, 1, CAP);
+    shm->head1 = shm->tail1 = shm->head2 = shm->tail2 = 0;
 
     pid_t pid1 = fork();
-    if(pid1 == 0) {
-        // S1 process
-        struct image_t *s1_out = allocate_image(W, H);
-        for(int iter = 0; iter < NUM_ITERATIONS; iter++) {
-            S1_smoothen(input_image, s1_out);
-            sem_wait(&header->s1_can_write);
-            image_to_flat_buf(s1_out, s1_buf);
-            sem_post(&header->s1_ready);
+    if (pid1 < 0) { perror("fork1"); return 1; }
+    if (pid1 == 0) {
+        int64_t seq = 0;
+        for (int iter = 1; iter <= 1000; iter++) {
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    size_t p = (size_t)i * W + j;
+                    Packet pkt; pkt.iter = iter; pkt.index = (int32_t)p; pkt.seq = seq++;
+                    for (int k = 0; k < 3; k++) {
+                        pkt.inp[k] = inp[p * 3 + k];
+                        pkt.payload[k] = s1_pixel(inp.data(), W, H, i, j, k);
+                    }
+                    q1_push(shm, pkt);
+                }
+            }
         }
-        free_image(s1_out);
-        shmdt(shm_ptr);
-        exit(0);
+        _exit(0);
     }
-
     pid_t pid2 = fork();
-    if(pid2 == 0) {
-        // S2 process
-        struct image_t *s1_result = allocate_image(W, H);
-        struct image_t *s2_out = allocate_image(W, H);
-        for(int iter = 0; iter < NUM_ITERATIONS; iter++) {
-            sem_wait(&header->s1_ready);
-            flat_buf_to_image(s1_buf, s1_result);
-            sem_post(&header->s1_can_write);
-            S2_find_details(input_image, s1_result, s2_out);
-            sem_wait(&header->s2_can_write);
-            image_to_flat_buf(s2_out, s2_buf);
-            sem_post(&header->s2_ready);
+    if (pid2 < 0) { perror("fork2"); return 1; }
+    if (pid2 == 0) {
+        int64_t expect = 0;
+        for (int iter = 1; iter <= 1000; iter++) {
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    (void)i; (void)j;
+                    Packet pkt; q1_pop(shm, pkt);
+                    if (pkt.seq != expect) { cerr << "S2 ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n"; _exit(1); }
+                    expect++;
+                    Packet out; out.iter = pkt.iter; out.index = pkt.index; out.seq = pkt.seq;
+                    for (int k = 0; k < 3; k++) {
+                        out.inp[k] = pkt.inp[k];
+                        out.payload[k] = s2_pixel(pkt.inp[k], pkt.payload[k]);
+                    }
+                    q2_push(shm, out);
+                }
+            }
         }
-        free_image(s1_result);
-        free_image(s2_out);
-        shmdt(shm_ptr);
-        exit(0);
+        _exit(0);
     }
 
-    // Parent: S3 process
-    struct image_t *s2_result = allocate_image(W, H);
-    struct image_t *s3_out = allocate_image(W, H);
-    for(int iter = 0; iter < NUM_ITERATIONS; iter++) {
-        sem_wait(&header->s2_ready);
-        flat_buf_to_image(s2_buf, s2_result);
-        sem_post(&header->s2_can_write);
-        S3_sharpen(input_image, s2_result, s3_out);
+    vector<uint8_t> out(N * 3, 0);
+    int64_t expect = 0;
+    for (int iter = 1; iter <= 1000; iter++) {
+        for (int i = 0; i < H; i++) {
+            for (int j = 0; j < W; j++) {
+                Packet pkt; q2_pop(shm, pkt);
+                if (pkt.seq != expect) { cerr << "S3 ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n"; return 1; }
+                expect++;
+                size_t p = (size_t)i * W + j;
+                for (int k = 0; k < 3; k++) {
+                    uint8_t v = s3_pixel(pkt.inp[k], pkt.payload[k]);
+                    if (iter == 1000) out[p * 3 + k] = v;
+                }
+            }
+        }
     }
-
-    waitpid(pid1, NULL, 0);
-    waitpid(pid2, NULL, 0);
-
-    auto end = chrono::steady_clock::now();
-
-    write_ppm_file(argv[2], s3_out);
-
-    cout << "Total time: " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " ms" << endl;
-
-    // Verification
-    unsigned long checksum = 0;
-    for(int i = 0; i < H; i++)
-        for(int j = 0; j < W; j++)
-            for(int k = 0; k < 3; k++)
-                checksum += s3_out->image_pixels[i][j][k] * (unsigned long)(i * W * 3 + j * 3 + k + 1);
-    cout << "Output checksum: " << checksum << endl;
-    cout << "Verification: Semaphore ordering ensures producer-consumer sequential delivery." << endl;
-
-    // Cleanup
-    sem_destroy(&header->s1_ready);
-    sem_destroy(&header->s2_ready);
-    sem_destroy(&header->s1_can_write);
-    sem_destroy(&header->s2_can_write);
-    shmdt(shm_ptr);
-    shmctl(shmid, IPC_RMID, NULL);
-    free_image(s2_result);
-    free_image(s3_out);
-    free_image(input_image);
-
+    int st1, st2;
+    waitpid(pid1, &st1, 0); waitpid(pid2, &st2, 0);
+    sem_destroy(&shm->full1); sem_destroy(&shm->empty1);
+    sem_destroy(&shm->full2); sem_destroy(&shm->empty2);
+    munmap(shm, sizeof(Shm));
+    shm_unlink(name);
+    if (!WIFEXITED(st1) || WEXITSTATUS(st1) != 0 || !WIFEXITED(st2) || WEXITSTATUS(st2) != 0) {
+        cerr << "child failed\n"; return 1;
+    }
+    auto t_done = chrono::steady_clock::now();
+    ofstream ws(argv[2], ios::binary | ios::out);
+    if (!ws.is_open()) { cerr << "failed to open file " << argv[2] << "\n"; return 1; }
+    ws.write("P6\n", 3);
+    string w = to_string(W); ws.write(w.c_str(), (streamsize)w.length()); ws.write(" ", 1);
+    string h = to_string(H); ws.write(h.c_str(), (streamsize)h.length());
+    ws.write("\n255\n", 5);
+    ws.write(reinterpret_cast<const char*>(out.data()), (streamsize)(N * 3));
+    ws.close();
+    auto t_write = chrono::steady_clock::now();
+    long long total = (long long)N * 1000;
+    cout << "order verified: " << total << " packets received in sent order (semaphore queues)\n";
+    cout << "read: " << chrono::duration_cast<chrono::milliseconds>(t_read - t0).count() << " ms\n";
+    cout << "pipeline (1000 iters, 3 processes, shm+sem): " << chrono::duration_cast<chrono::milliseconds>(t_done - t_read).count() << " ms\n";
+    cout << "write: " << chrono::duration_cast<chrono::milliseconds>(t_write - t_done).count() << " ms\n";
+    cout << "total: " << chrono::duration_cast<chrono::milliseconds>(t_write - t0).count() << " ms\n";
     return 0;
 }
+

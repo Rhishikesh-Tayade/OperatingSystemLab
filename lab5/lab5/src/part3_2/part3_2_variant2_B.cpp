@@ -1,109 +1,110 @@
-// Part 3.2 Variant 2: Socket-based distributed computing
-// Computer B: Runs S2 and S3, receives S1 results from Computer A
-// Batched: S2×100 per received result, S3×100 per S2 result
+// Part3_2 Variant2 B (client, S2+S3 on B). Receives 10xN smooth,
+// S2 100 per forwarded ->10, S3 100 per forwarded -> last written.
+// Usage: <ip_of_A> <port> <output.ppm>
 #include <iostream>
+#include <fstream>
+#include <vector>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
-#include <chrono>
+#include <cstring>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <sys/socket.h>
-#include "../common/libppm.h"
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <chrono>
 
 using namespace std;
 
-#define S2_ITERATIONS 100
-#define S3_ITERATIONS 100
+struct Packet {
+    int32_t iter;
+    int32_t index;
+    int64_t seq;
+    uint8_t inp[3];
+    uint8_t payload[3];
+};
 
-void S2_find_details(struct image_t *orig, struct image_t *smooth, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int diff = (int)orig->image_pixels[i][j][k] - (int)smooth->image_pixels[i][j][k];
-                dst->image_pixels[i][j][k] = (uint8_t)(int8_t)diff;
+static inline uint8_t s2_pixel(uint8_t inp, uint8_t smo) {
+    int diff = (int)inp - (int)smo;
+    return (uint8_t)(int8_t)diff;
+}
+static inline uint8_t s3_pixel(uint8_t inp, uint8_t det) {
+    int v = (int)inp + (int8_t)det;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)v;
+}
+static bool recv_all(int fd, void *buf, size_t n) {
+    char *p = (char*)buf; size_t got = 0;
+    while (got < n) { ssize_t r = recv(fd, p + got, n - got, 0); if (r <= 0) return false; got += (size_t)r; }
+    return true;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 4) { cout << "usage: ./part3_2_variant2_B <ip_of_A> <port> <output.ppm>\n"; return 0; }
+    const char *ip = argv[1]; int port = atoi(argv[2]);
+    auto t0 = chrono::steady_clock::now();
+    int cli = socket(AF_INET, SOCK_STREAM, 0);
+    if (cli < 0) { perror("socket"); return 1; }
+    sockaddr_in addr; memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET; addr.sin_port = htons((uint16_t)port);
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) { cerr << "bad IP\n"; return 1; }
+    cout << "B (S2+S3 client, v2) connecting to " << ip << ":" << port << " ...\n";
+    if (connect(cli, (sockaddr*)&addr, sizeof(addr)) != 0) { perror("connect"); return 1; }
+    int wh[2]; if (!recv_all(cli, wh, sizeof(wh))) { cerr << "recv header failed\n"; return 1; }
+    int W = wh[0], H = wh[1];
+    size_t N = (size_t)W * H;
+    vector<uint8_t> out(N * 3, 0);
+    int64_t expect = 0;
+    for (int g = 1; g <= 10; g++) {
+        vector<Packet> group(N);
+        for (int i = 0; i < H; i++) {
+            for (int j = 0; j < W; j++) {
+                Packet pkt; if (!recv_all(cli, &pkt, sizeof(pkt))) { cerr << "recv failed\n"; return 1; }
+                if (pkt.seq != expect) { cerr << "ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n"; return 1; }
+                expect++;
+                size_t p = (size_t)i * W + j;
+                group[p] = pkt;
             }
-}
-
-void S3_sharpen(struct image_t *orig, struct image_t *details, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int val = (int)orig->image_pixels[i][j][k] + (int8_t)details->image_pixels[i][j][k];
-                if(val < 0) val = 0;
-                if(val > 255) val = 255;
-                dst->image_pixels[i][j][k] = (uint8_t)val;
+        }
+        // S2: 100 runs, keep 100th
+        vector<uint8_t> det_grp(N * 3);
+        for (int run = 1; run <= 100; run++) {
+            bool fwd = (run == 100);
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    size_t p = (size_t)i * W + j;
+                    for (int k = 0; k < 3; k++) {
+                        uint8_t v = s2_pixel(group[p].inp[k], group[p].payload[k]);
+                        if (fwd) det_grp[p * 3 + k] = v;
+                    }
+                }
             }
-}
-
-void read_all(int fd, void *buf, size_t n)
-{
-    uint8_t *p = (uint8_t *)buf;
-    while(n > 0) { ssize_t r = read(fd, p, n); if(r <= 0) { perror("read"); exit(1); } p += r; n -= r; }
-}
-
-int main(int argc, char **argv)
-{
-    if(argc != 3) {
-        cout << "usage: ./part3_2_v2_B <port> <output.ppm>" << endl;
-        exit(1);
-    }
-
-    int port = atoi(argv[1]);
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(port);
-    bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));
-    listen(server_fd, 1);
-
-    cout << "=== Part 3.2 Variant 2: Computer B (S2+S3) ===" << endl;
-    cout << "Listening on port " << port << "..." << endl;
-
-    int client_fd = accept(server_fd, NULL, NULL);
-    cout << "Client connected!" << endl;
-
-    int32_t dims[3];
-    read_all(client_fd, dims, sizeof(dims));
-    int W = dims[0], H = dims[1], num_passes = dims[2];
-    int img_size = H * W * 3;
-
-    uint8_t *input_flat = new uint8_t[img_size];
-    read_all(client_fd, input_flat, img_size);
-    struct image_t *input_image = flat_to_image(input_flat, W, H);
-    delete[] input_flat;
-
-    auto start = chrono::steady_clock::now();
-
-    struct image_t *s2_out = allocate_image(W, H);
-    struct image_t *s3_out = allocate_image(W, H);
-    uint8_t *recv_buf = new uint8_t[img_size];
-
-    for(int p = 0; p < num_passes; p++) {
-        read_all(client_fd, recv_buf, img_size);
-        struct image_t *s1_result = flat_to_image(recv_buf, W, H);
-        for(int iter = 1; iter <= S2_ITERATIONS; iter++) {
-            S2_find_details(input_image, s1_result, s2_out);
         }
-        for(int iter = 1; iter <= S3_ITERATIONS; iter++) {
-            S3_sharpen(input_image, s2_out, s3_out);
+        // S3: 100 runs on det_grp, last written
+        for (int run = 1; run <= 100; run++) {
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    size_t p = (size_t)i * W + j;
+                    for (int k = 0; k < 3; k++) {
+                        uint8_t v = s3_pixel(group[p].inp[k], det_grp[p * 3 + k]);
+                        if (g == 10 && run == 100) out[p * 3 + k] = v;
+                    }
+                }
+            }
         }
-        free_image(s1_result);
     }
-
-    auto end = chrono::steady_clock::now();
-
-    write_ppm_file(argv[2], s3_out);
-    cout << "Total time (B): " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " ms" << endl;
-
-    close(client_fd); close(server_fd);
-    delete[] recv_buf; free_image(s2_out); free_image(s3_out); free_image(input_image);
+    auto t_recv = chrono::steady_clock::now();
+    close(cli);
+    ofstream ws(argv[3], ios::binary | ios::out);
+    if (!ws.is_open()) { cerr << "failed to open file " << argv[3] << "\n"; return 1; }
+    ws.write("P6\n", 3);
+    string w = to_string(W); ws.write(w.c_str(), (streamsize)w.length()); ws.write(" ", 1);
+    string h = to_string(H); ws.write(h.c_str(), (streamsize)h.length());
+    ws.write("\n255\n", 5);
+    ws.write(reinterpret_cast<const char*>(out.data()), (streamsize)(N * 3));
+    ws.close();
+    auto t_write = chrono::steady_clock::now();
+    cout << "order verified: " << expect << " packets received in sent order\n";
+    cout << "recv+S2+S3: " << chrono::duration_cast<chrono::milliseconds>(t_recv - t0).count() << " ms, write: " << chrono::duration_cast<chrono::milliseconds>(t_write - t_recv).count() << " ms\n";
     return 0;
 }

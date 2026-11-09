@@ -1,260 +1,183 @@
-// Part 2.2 Variant 1: Multi-process + Pipes
-// Pipeline: S1->S2->S3, 1000 iterations
-// Each iteration: S1 uses original input, passes result to S2 via pipe,
-// S2 passes result to S3 via pipe. 1000th S3 result written to file.
+// Part2_2 Variant1: 3 processes, pipes, variant 1.
+// S1 (child) reads file once, streams packets to S2 via pipe1.
+// S2 streams to S3 (parent) via pipe2. S3 writes S3_1000 output.
+// 1000 linked iterations; pixels stream per-pixel (no whole-image wait).
+// Order proof: each packet carries seq (0..N*1000-1) + iter + index.
+// Receivers verify seq is strictly increasing by 1; any gap = failure.
 #include <iostream>
+#include <fstream>
+#include <vector>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
-#include <chrono>
+#include <cstring>
 #include <unistd.h>
 #include <sys/wait.h>
-#include "../common/libppm.h"
+#include <chrono>
+#include "libppm.h"
 
 using namespace std;
 
-#define NUM_ITERATIONS 1000
+struct Packet {
+    int32_t iter;
+    int32_t index;
+    int64_t seq;
+    uint8_t inp[3];
+    uint8_t payload[3];
+};
 
-void S1_smoothen_row(struct image_t *src, struct image_t *dst, int row)
-{
-    int m = src->height, n = src->width;
-    if(row == 0 || row == m - 1) {
-        for(int j = 0; j < n; j++)
-            for(int k = 0; k < 3; k++)
-                dst->image_pixels[row][j][k] = src->image_pixels[row][j][k];
-        return;
-    }
-    for(int k = 0; k < 3; k++) {
-        dst->image_pixels[row][0][k] = src->image_pixels[row][0][k];
-        dst->image_pixels[row][n-1][k] = src->image_pixels[row][n-1][k];
-    }
-    for(int j = 1; j < n - 1; j++)
-        for(int k = 0; k < 3; k++) {
-            int temp = 0;
-            for(int x = row - 1; x < row + 2; x++)
-                for(int y = j - 1; y < j + 2; y++)
-                    temp += src->image_pixels[x][y][k];
-            dst->image_pixels[row][j][k] = temp / 9;
-        }
+static inline uint8_t s1_pixel(const uint8_t *inp, int W, int H, int i, int j, int k) {
+    if (i == 0 || i == H - 1 || j == 0 || j == W - 1)
+        return inp[(i * W + j) * 3 + k];
+    int t = 0;
+    for (int x = i - 1; x < i + 2; x++)
+        for (int y = j - 1; y < j + 2; y++)
+            t += inp[(x * W + y) * 3 + k];
+    return (uint8_t)(t / 9);
+}
+static inline uint8_t s2_pixel(uint8_t inp, uint8_t smo) {
+    int diff = (int)inp - (int)smo;
+    return (uint8_t)(int8_t)diff;
+}
+static inline uint8_t s3_pixel(uint8_t inp, uint8_t det) {
+    int v = (int)inp + (int8_t)det;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)v;
 }
 
-void S2_find_details_row(struct image_t *orig, struct image_t *smooth, struct image_t *dst, int row)
-{
-    for(int j = 0; j < orig->width; j++)
-        for(int k = 0; k < 3; k++) {
-            int diff = (int)orig->image_pixels[row][j][k] - (int)smooth->image_pixels[row][j][k];
-            dst->image_pixels[row][j][k] = (uint8_t)(int8_t)diff;
-        }
-}
-
-void S3_sharpen_row(struct image_t *orig, struct image_t *details, struct image_t *dst, int row)
-{
-    for(int j = 0; j < orig->width; j++)
-        for(int k = 0; k < 3; k++) {
-            int val = (int)orig->image_pixels[row][j][k] + (int8_t)details->image_pixels[row][j][k];
-            if(val < 0) val = 0;
-            if(val > 255) val = 255;
-            dst->image_pixels[row][j][k] = (uint8_t)val;
-        }
-}
-
-// Helper: write exactly n bytes to fd
-void write_all(int fd, const void *buf, size_t n)
-{
-    const uint8_t *p = (const uint8_t *)buf;
-    while(n > 0) {
+static bool write_all(int fd, const void *buf, size_t n) {
+    const char *p = (const char*)buf;
+    while (n > 0) {
         ssize_t w = write(fd, p, n);
-        if(w <= 0) { perror("write"); exit(1); }
-        p += w;
-        n -= w;
+        if (w <= 0) return false;
+        p += w; n -= (size_t)w;
     }
+    return true;
 }
-
-// Helper: read exactly n bytes from fd
-void read_all(int fd, void *buf, size_t n)
-{
-    uint8_t *p = (uint8_t *)buf;
-    while(n > 0) {
-        ssize_t r = read(fd, p, n);
-        if(r <= 0) { perror("read"); exit(1); }
-        p += r;
-        n -= r;
+static bool read_all(int fd, void *buf, size_t n) {
+    char *p = (char*)buf;
+    size_t got = 0;
+    while (got < n) {
+        ssize_t r = read(fd, p + got, n - got);
+        if (r <= 0) return false;
+        got += (size_t)r;
     }
+    return true;
 }
 
-unsigned long compute_row_checksum(const uint8_t *buf, int width)
-{
-    unsigned long sum = 0;
-    for(int j = 0; j < width; j++)
-        for(int k = 0; k < 3; k++)
-            sum += buf[j * 3 + k] * (unsigned long)(j * 3 + k + 1);
-    return sum;
-}
+int main(int argc, char **argv) {
+    if (argc != 3) { cout << "usage: ./part2_2_variant1 <input> <output>\n"; return 0; }
+    auto t0 = chrono::steady_clock::now();
+    image_t *img = read_ppm_file(argv[1]);
+    int W = img->width, H = img->height;
+    size_t N = (size_t)W * H;
+    vector<uint8_t> inp(N * 3);
+    for (int i = 0; i < H; i++)
+        for (int j = 0; j < W; j++)
+            for (int k = 0; k < 3; k++)
+                inp[((size_t)i * W + j) * 3 + k] = img->image_pixels[i][j][k];
+    auto t_read = chrono::steady_clock::now();
 
-void row_to_flat(struct image_t *img, int row, uint8_t *buf)
-{
-    int idx = 0;
-    for(int j = 0; j < img->width; j++)
-        for(int k = 0; k < 3; k++)
-            buf[idx++] = img->image_pixels[row][j][k];
-}
-
-void flat_to_row(const uint8_t *buf, struct image_t *img, int row)
-{
-    int idx = 0;
-    for(int j = 0; j < img->width; j++)
-        for(int k = 0; k < 3; k++)
-            img->image_pixels[row][j][k] = buf[idx++];
-}
-
-int main(int argc, char **argv)
-{
-    if(argc != 3) {
-        cout << "usage: ./part2_2_v1 <input.ppm> <output.ppm>" << endl;
-        exit(1);
-    }
-
-    // Pipes: pipe1 = S1->S2, pipe2 = S2->S3
     int pipe1[2], pipe2[2];
-    if(pipe(pipe1) < 0 || pipe(pipe2) < 0) {
-        perror("pipe");
-        exit(1);
-    }
-
-    struct image_t *input_image = read_ppm_file(argv[1]);
-    int HEIGHT = input_image->height;
-    int WIDTH = input_image->width;
-    int row_bytes = WIDTH * 3;
-
-    cout << "=== Part 2.2 Variant 1: Processes + Pipes (Row Pipelining) ===" << endl;
-    cout << "Image: " << WIDTH << "x" << HEIGHT << ", Iterations: " << NUM_ITERATIONS << endl;
-
-    auto start = chrono::steady_clock::now();
+    if (pipe(pipe1) != 0 || pipe(pipe2) != 0) { perror("pipe"); return 1; }
 
     pid_t pid1 = fork();
-    if(pid1 == 0) {
-        // Child 1: S1 process
-        close(pipe1[0]);  // close read end of pipe1
-        close(pipe2[0]);
-        close(pipe2[1]);
-
-        struct image_t *s1_out = allocate_image(WIDTH, HEIGHT);
-        uint8_t *row_buf = new uint8_t[row_bytes];
-
-        for(int iter = 0; iter < NUM_ITERATIONS; iter++) {
-            for(int row = 0; row < HEIGHT; row++) {
-                S1_smoothen_row(input_image, s1_out, row);
-                row_to_flat(s1_out, row, row_buf);
-                int32_t r_idx = row;
-                unsigned long cs = compute_row_checksum(row_buf, WIDTH);
-                write_all(pipe1[1], &r_idx, sizeof(r_idx));
-                write_all(pipe1[1], &cs, sizeof(cs));
-                write_all(pipe1[1], row_buf, row_bytes);
+    if (pid1 < 0) { perror("fork1"); return 1; }
+    if (pid1 == 0) {
+        // S1 child
+        close(pipe1[0]); close(pipe2[0]); close(pipe2[1]);
+        int64_t seq = 0;
+        for (int iter = 1; iter <= 1000; iter++) {
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    size_t p = (size_t)i * W + j;
+                    Packet pkt;
+                    pkt.iter = iter;
+                    pkt.index = (int32_t)p;
+                    pkt.seq = seq++;
+                    for (int k = 0; k < 3; k++) {
+                        pkt.inp[k] = inp[p * 3 + k];
+                        pkt.payload[k] = s1_pixel(inp.data(), W, H, i, j, k);
+                    }
+                    if (!write_all(pipe1[1], &pkt, sizeof(pkt))) _exit(1);
+                }
             }
         }
-        delete[] row_buf;
-        free_image(s1_out);
         close(pipe1[1]);
-        exit(0);
+        _exit(0);
     }
 
     pid_t pid2 = fork();
-    if(pid2 == 0) {
-        // Child 2: S2 process
-        close(pipe1[1]);  // close write end of pipe1
-        close(pipe2[0]);  // close read end of pipe2
-
-        struct image_t *s1_in = allocate_image(WIDTH, HEIGHT);
-        struct image_t *s2_out = allocate_image(WIDTH, HEIGHT);
-        uint8_t *recv_row_buf = new uint8_t[row_bytes];
-        uint8_t *send_row_buf = new uint8_t[row_bytes];
-
-        for(int iter = 0; iter < NUM_ITERATIONS; iter++) {
-            for(int row = 0; row < HEIGHT; row++) {
-                int32_t r_idx;
-                unsigned long expected_cs;
-                read_all(pipe1[0], &r_idx, sizeof(r_idx));
-                read_all(pipe1[0], &expected_cs, sizeof(expected_cs));
-                read_all(pipe1[0], recv_row_buf, row_bytes);
-
-                // Verification check: exact order and checksum
-                unsigned long actual_cs = compute_row_checksum(recv_row_buf, WIDTH);
-                if(r_idx != row || actual_cs != expected_cs) {
-                    cerr << "Error in S2: order or checksum mismatch at row " << row << endl;
-                    exit(1);
+    if (pid2 < 0) { perror("fork2"); return 1; }
+    if (pid2 == 0) {
+        // S2 child
+        close(pipe1[1]); close(pipe2[0]);
+        int64_t expect = 0;
+        for (int iter = 1; iter <= 1000; iter++) {
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    Packet pkt;
+                    if (!read_all(pipe1[0], &pkt, sizeof(pkt))) _exit(1);
+                    if (pkt.seq != expect) {
+                        cerr << "S2 ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n";
+                        _exit(1);
+                    }
+                    expect++;
+                    Packet out;
+                    out.iter = pkt.iter; out.index = pkt.index; out.seq = pkt.seq;
+                    for (int k = 0; k < 3; k++) {
+                        out.inp[k] = pkt.inp[k];
+                        out.payload[k] = s2_pixel(pkt.inp[k], pkt.payload[k]);
+                    }
+                    if (!write_all(pipe2[1], &out, sizeof(out))) _exit(1);
                 }
-
-                flat_to_row(recv_row_buf, s1_in, row);
-                S2_find_details_row(input_image, s1_in, s2_out, row);
-                row_to_flat(s2_out, row, send_row_buf);
-
-                unsigned long s2_cs = compute_row_checksum(send_row_buf, WIDTH);
-                write_all(pipe2[1], &r_idx, sizeof(r_idx));
-                write_all(pipe2[1], &s2_cs, sizeof(s2_cs));
-                write_all(pipe2[1], send_row_buf, row_bytes);
             }
         }
-        delete[] recv_row_buf;
-        delete[] send_row_buf;
-        free_image(s1_in);
-        free_image(s2_out);
-        close(pipe1[0]);
-        close(pipe2[1]);
-        exit(0);
+        close(pipe1[0]); close(pipe2[1]);
+        _exit(0);
     }
 
-    // Parent: S3 process
-    close(pipe1[0]);
-    close(pipe1[1]);
-    close(pipe2[1]);  // close write end of pipe2
-
-    struct image_t *s2_in = allocate_image(WIDTH, HEIGHT);
-    struct image_t *s3_out = allocate_image(WIDTH, HEIGHT);
-    uint8_t *recv_s2_buf = new uint8_t[row_bytes];
-
-    for(int iter = 0; iter < NUM_ITERATIONS; iter++) {
-        for(int row = 0; row < HEIGHT; row++) {
-            int32_t r_idx;
-            unsigned long expected_cs;
-            read_all(pipe2[0], &r_idx, sizeof(r_idx));
-            read_all(pipe2[0], &expected_cs, sizeof(expected_cs));
-            read_all(pipe2[0], recv_s2_buf, row_bytes);
-
-            // Verification check
-            unsigned long actual_cs = compute_row_checksum(recv_s2_buf, WIDTH);
-            if(r_idx != row || actual_cs != expected_cs) {
-                cerr << "Error in S3: order or checksum mismatch at row " << row << endl;
-                exit(1);
+    // Parent = S3
+    close(pipe1[0]); close(pipe1[1]); close(pipe2[1]);
+    vector<uint8_t> out(N * 3, 0);
+    int64_t expect = 0;
+    for (int iter = 1; iter <= 1000; iter++) {
+        for (int i = 0; i < H; i++) {
+            for (int j = 0; j < W; j++) {
+                Packet pkt;
+                if (!read_all(pipe2[0], &pkt, sizeof(pkt))) { cerr << "S3 read fail\n"; return 1; }
+                if (pkt.seq != expect) { cerr << "S3 ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n"; return 1; }
+                expect++;
+                size_t p = (size_t)i * W + j;
+                for (int k = 0; k < 3; k++) {
+                    uint8_t v = s3_pixel(pkt.inp[k], pkt.payload[k]);
+                    if (iter == 1000) out[p * 3 + k] = v;
+                }
             }
-
-            flat_to_row(recv_s2_buf, s2_in, row);
-            S3_sharpen_row(input_image, s2_in, s3_out, row);
         }
     }
     close(pipe2[0]);
-    delete[] recv_s2_buf;
-    free_image(s2_in);
-
-    waitpid(pid1, NULL, 0);
-    waitpid(pid2, NULL, 0);
-
-    auto end = chrono::steady_clock::now();
-
-    write_ppm_file(argv[2], s3_out);
-
-    cout << "Total time: " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " ms" << endl;
-
-    // Verification: compute output checksum
-    unsigned long checksum = 0;
-    for(int i = 0; i < HEIGHT; i++)
-        for(int j = 0; j < WIDTH; j++)
-            for(int k = 0; k < 3; k++)
-                checksum += s3_out->image_pixels[i][j][k] * (unsigned long)(i * WIDTH * 3 + j * 3 + k + 1);
-    cout << "Output checksum: " << checksum << endl;
-    cout << "Verification: Pipe guarantees FIFO ordering. Rows sent sequentially, received sequentially." << endl;
-
-    free_image(s3_out);
-    free_image(input_image);
-
+    int st1, st2;
+    waitpid(pid1, &st1, 0); waitpid(pid2, &st2, 0);
+    if (!WIFEXITED(st1) || WEXITSTATUS(st1) != 0 || !WIFEXITED(st2) || WEXITSTATUS(st2) != 0) {
+        cerr << "child failed p1=" << WEXITSTATUS(st1) << " p2=" << WEXITSTATUS(st2) << "\n";
+        return 1;
+    }
+    auto t_done = chrono::steady_clock::now();
+    ofstream ws(argv[2], ios::binary | ios::out);
+    if (!ws.is_open()) { cerr << "failed to open file " << argv[2] << "\n"; return 1; }
+    ws.write("P6\n", 3);
+    string w = to_string(W); ws.write(w.c_str(), (streamsize)w.length()); ws.write(" ", 1);
+    string h = to_string(H); ws.write(h.c_str(), (streamsize)h.length());
+    ws.write("\n255\n", 5);
+    ws.write(reinterpret_cast<const char*>(out.data()), (streamsize)(N * 3));
+    ws.close();
+    auto t_write = chrono::steady_clock::now();
+    long long total = (long long)N * 1000;
+    cout << "order verified: " << total << " packets received in sent order (S1->S2, S2->S3, seq checked)\n";
+    cout << "read: " << chrono::duration_cast<chrono::milliseconds>(t_read - t0).count() << " ms\n";
+    cout << "pipeline (1000 iters, 3 processes, pipes): " << chrono::duration_cast<chrono::milliseconds>(t_done - t_read).count() << " ms\n";
+    cout << "write: " << chrono::duration_cast<chrono::milliseconds>(t_write - t_done).count() << " ms\n";
+    cout << "total: " << chrono::duration_cast<chrono::milliseconds>(t_write - t0).count() << " ms\n";
     return 0;
 }

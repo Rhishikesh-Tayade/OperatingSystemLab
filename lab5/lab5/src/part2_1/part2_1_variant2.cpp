@@ -1,216 +1,162 @@
-// Part 2.1 Variant 2: Threads + Atomic Operations
-// S1 runs 1000 times, every 100th result -> S2
-// S2 runs 100 times per input, every 100th result -> S3
-// S3 runs 100 times per input, last result written to file
+// Part2_1 Variant2: 3 threads, atomic operations, variant 2.
+// S1 runs 1000 times, every 100th forwarded (10 forwards).
+// Per forwarded S1 result, S2 runs 100 times, 100th forwarded (10 forwards).
+// Per forwarded S2 result, S3 runs 100 times, last run written.
+// Totals: S1=1000 runs, S2=1000 runs, S3=1000 runs. Deterministic, so
+// final output equals Part I. Pixels stream per-pixel via atomics.
+// Order proof: seq numbers per forwarded group; consumers spin on
+// atomic generation flags and verify strict order + counts.
 #include <iostream>
+#include <fstream>
+#include <vector>
+#include <memory>
 #include <thread>
 #include <atomic>
 #include <chrono>
-#include <cstring>
-#include "../common/libppm.h"
+#include <cstdint>
+#include <cstdlib>
+#include "libppm.h"
 
 using namespace std;
 
-#define S1_ITERATIONS 1000
-#define S2_ITERATIONS 100
-#define S3_ITERATIONS 100
-#define S1_PASS_EVERY 100  // pass to S2 every 100th S1 result
-
-// Shared buffers (double-buffered for S1->S2 and S2->S3)
-struct image_t *input_image;
-struct image_t *s1_buffer;  // S1 writes its result here
-struct image_t *s2_input;   // Copy of S1 result for S2
-struct image_t *s2_buffer;  // S2 writes its result here
-struct image_t *s3_input;   // Copy of S2 result for S3
-struct image_t *s3_output;  // Final output
-
-int HEIGHT, WIDTH;
-
-// Signaling: how many results have been passed
-atomic<int> s1_to_s2_count(0);  // Number of results S1 has passed to S2
-atomic<int> s2_to_s3_count(0);  // Number of results S2 has passed to S3
-atomic<int> s1_to_s2_consumed(0); // Number of results S2 has consumed
-atomic<int> s2_to_s3_consumed(0); // Number of results S3 has consumed
-
-// Flag to indicate buffer is ready
-atomic<bool> s1_buffer_ready(false);
-atomic<bool> s2_buffer_ready(false);
-
-// Verification
-atomic<unsigned long> s1_final_checksum(0);
-atomic<unsigned long> s2_final_checksum(0);
-atomic<unsigned long> s3_final_checksum(0);
-
-void copy_image(struct image_t *src, struct image_t *dst)
-{
-    for(int i = 0; i < src->height; i++)
-        for(int j = 0; j < src->width; j++)
-            for(int k = 0; k < 3; k++)
-                dst->image_pixels[i][j][k] = src->image_pixels[i][j][k];
+static inline uint8_t s1_pixel(const uint8_t *inp, int W, int H, int i, int j, int k) {
+    if (i == 0 || i == H - 1 || j == 0 || j == W - 1)
+        return inp[(i * W + j) * 3 + k];
+    int t = 0;
+    for (int x = i - 1; x < i + 2; x++)
+        for (int y = j - 1; y < j + 2; y++)
+            t += inp[(x * W + y) * 3 + k];
+    return (uint8_t)(t / 9);
+}
+static inline uint8_t s2_pixel(uint8_t inp, uint8_t smo) {
+    int diff = (int)inp - (int)smo;
+    return (uint8_t)(int8_t)diff;
+}
+static inline uint8_t s3_pixel(uint8_t inp, uint8_t det) {
+    int v = (int)inp + (int8_t)det;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)v;
 }
 
-void S1_smoothen(struct image_t *src, struct image_t *dst)
-{
-    int m = src->height, n = src->width;
-    for(int i = 0; i < m; i++)
-        for(int j = 0; j < n; j++)
-            for(int k = 0; k < 3; k++)
-                dst->image_pixels[i][j][k] = src->image_pixels[i][j][k];
+static vector<uint8_t> g_inp;
+static vector<uint8_t> g_smooth;
+static vector<uint8_t> g_det;
+static vector<uint8_t> g_out;
+static int g_W = 0, g_H = 0;
+static size_t g_N = 0;
+static unique_ptr<atomic<int>[]> g_smooth_gen; // generation g=1..10 when published
+static unique_ptr<atomic<int>[]> g_det_gen;
+static atomic<int> g_s2_consumed{0};
+static atomic<int> g_s3_consumed{0};
+static atomic<long long> g_verify_smooth{0};
+static atomic<long long> g_verify_det{0};
 
-    for(int i = 1; i < m - 1; i++)
-        for(int j = 1; j < n - 1; j++)
-            for(int k = 0; k < 3; k++) {
-                int temp = 0;
-                for(int x = i - 1; x < i + 2; x++)
-                    for(int y = j - 1; y < j + 2; y++)
-                        temp += src->image_pixels[x][y][k];
-                dst->image_pixels[i][j][k] = temp / 9;
+static void s1_thread() {
+    for (int run = 1; run <= 1000; run++) {
+        bool fwd = (run % 100 == 0);
+        int gen = fwd ? (run / 100) : 0;
+        if (fwd && gen > 1) {
+            while (g_s2_consumed.load(memory_order_acquire) < gen - 1) { }
+        }
+        for (int i = 0; i < g_H; i++) {
+            for (int j = 0; j < g_W; j++) {
+                size_t p = (size_t)i * g_W + j;
+                for (int k = 0; k < 3; k++)
+                    g_smooth[p * 3 + k] = s1_pixel(g_inp.data(), g_W, g_H, i, j, k);
+                if (fwd) g_smooth_gen[p].store(gen, memory_order_release);
             }
-}
-
-void S2_find_details(struct image_t *orig, struct image_t *smooth, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int diff = (int)orig->image_pixels[i][j][k] - (int)smooth->image_pixels[i][j][k];
-                dst->image_pixels[i][j][k] = (uint8_t)(int8_t)diff;
-            }
-}
-
-void S3_sharpen(struct image_t *orig, struct image_t *details, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int val = (int)orig->image_pixels[i][j][k] + (int8_t)details->image_pixels[i][j][k];
-                if(val < 0) val = 0;
-                if(val > 255) val = 255;
-                dst->image_pixels[i][j][k] = (uint8_t)val;
-            }
-}
-
-unsigned long compute_checksum(struct image_t *img)
-{
-    unsigned long sum = 0;
-    for(int i = 0; i < img->height; i++)
-        for(int j = 0; j < img->width; j++)
-            for(int k = 0; k < 3; k++)
-                sum += img->image_pixels[i][j][k] * (unsigned long)(i * img->width * 3 + j * 3 + k + 1);
-    return sum;
-}
-
-void thread_S1()
-{
-    int passes = 0;
-    for(int iter = 1; iter <= S1_ITERATIONS; iter++) {
-        S1_smoothen(input_image, s1_buffer);
-        if(iter % S1_PASS_EVERY == 0) {
-            // Wait until S2 has consumed previous buffer
-            while(s1_to_s2_count.load(memory_order_acquire) > s1_to_s2_consumed.load(memory_order_acquire)) {
-                // spin
-            }
-            copy_image(s1_buffer, s2_input);
-            unsigned long cs = compute_checksum(s2_input);
-            s1_final_checksum.store(cs, memory_order_relaxed);
-            s1_to_s2_count.fetch_add(1, memory_order_release);
-            passes++;
         }
     }
 }
 
-void thread_S2()
-{
-    int total_passes = S1_ITERATIONS / S1_PASS_EVERY;  // 10 passes from S1
-    for(int p = 0; p < total_passes; p++) {
-        // Wait for S1 to produce a result
-        while(s1_to_s2_count.load(memory_order_acquire) <= p) {
-            // spin
+static void s2_thread() {
+    for (int g = 1; g <= 10; g++) {
+        if (g > 1) {
+            while (g_s3_consumed.load(memory_order_acquire) < g - 1) { }
         }
-        // S2 runs S2_ITERATIONS times on this input
-        for(int iter = 1; iter <= S2_ITERATIONS; iter++) {
-            S2_find_details(input_image, s2_input, s2_buffer);
-            if(iter % S2_ITERATIONS == 0) {
-                // Pass to S3: wait until S3 consumed previous
-                while(s2_to_s3_count.load(memory_order_acquire) > s2_to_s3_consumed.load(memory_order_acquire)) {
-                    // spin
+        for (int run = 1; run <= 100; run++) {
+            bool fwd = (run == 100);
+            for (int i = 0; i < g_H; i++) {
+                for (int j = 0; j < g_W; j++) {
+                    size_t p = (size_t)i * g_W + j;
+                    if (run == 1) {
+                        while (g_smooth_gen[p].load(memory_order_acquire) != g) { }
+                    }
+                    for (int k = 0; k < 3; k++)
+                        g_det[p * 3 + k] = s2_pixel(g_inp[p * 3 + k], g_smooth[p * 3 + k]);
+                    if (run == 1) g_verify_smooth.fetch_add(1, memory_order_release);
+                    if (fwd) g_det_gen[p].store(g, memory_order_release);
                 }
-                copy_image(s2_buffer, s3_input);
-                unsigned long cs = compute_checksum(s3_input);
-                s2_final_checksum.store(cs, memory_order_relaxed);
-                s2_to_s3_count.fetch_add(1, memory_order_release);
             }
         }
-        s1_to_s2_consumed.fetch_add(1, memory_order_release);
+        g_s2_consumed.store(g, memory_order_release);
     }
 }
 
-void thread_S3()
-{
-    int total_passes = S1_ITERATIONS / S1_PASS_EVERY;  // 10 passes from S2
-    for(int p = 0; p < total_passes; p++) {
-        // Wait for S2 to produce a result
-        while(s2_to_s3_count.load(memory_order_acquire) <= p) {
-            // spin
+static void s3_thread() {
+    for (int g = 1; g <= 10; g++) {
+        for (int run = 1; run <= 100; run++) {
+            for (int i = 0; i < g_H; i++) {
+                for (int j = 0; j < g_W; j++) {
+                    size_t p = (size_t)i * g_W + j;
+                    if (run == 1) {
+                        while (g_det_gen[p].load(memory_order_acquire) != g) { }
+                    }
+                    for (int k = 0; k < 3; k++)
+                        g_out[p * 3 + k] = s3_pixel(g_inp[p * 3 + k], g_det[p * 3 + k]);
+                    if (run == 1) g_verify_det.fetch_add(1, memory_order_release);
+                }
+            }
         }
-        // S3 runs S3_ITERATIONS times
-        for(int iter = 1; iter <= S3_ITERATIONS; iter++) {
-            S3_sharpen(input_image, s3_input, s3_output);
-        }
-        s3_final_checksum.store(compute_checksum(s3_output), memory_order_relaxed);
-        s2_to_s3_consumed.fetch_add(1, memory_order_release);
+        g_s3_consumed.store(g, memory_order_release);
     }
 }
 
-int main(int argc, char **argv)
-{
-    if(argc != 3) {
-        cout << "usage: ./part2_1_v2 <input.ppm> <output.ppm>" << endl;
-        exit(1);
+static void write_flat(const char *path) {
+    ofstream ws(path, ios::binary | ios::out);
+    if (!ws.is_open()) { cerr << "failed to open file " << path << "\n"; exit(1); }
+    ws.write("P6\n", 3);
+    string w = to_string(g_W); ws.write(w.c_str(), (streamsize)w.length()); ws.write(" ", 1);
+    string h = to_string(g_H); ws.write(h.c_str(), (streamsize)h.length());
+    ws.write("\n255\n", 5);
+    ws.write(reinterpret_cast<const char*>(g_out.data()), (streamsize)(g_N * 3));
+    ws.close();
+}
+
+int main(int argc, char **argv) {
+    if (argc != 3) { cout << "usage: ./part2_1_variant2 <input> <output>\n"; return 0; }
+    auto t0 = chrono::steady_clock::now();
+    image_t *img = read_ppm_file(argv[1]);
+    g_W = img->width; g_H = img->height; g_N = (size_t)g_W * g_H;
+    g_inp.resize(g_N * 3);
+    for (int i = 0; i < g_H; i++)
+        for (int j = 0; j < g_W; j++)
+            for (int k = 0; k < 3; k++)
+                g_inp[((size_t)i * g_W + j) * 3 + k] = img->image_pixels[i][j][k];
+    auto t_read = chrono::steady_clock::now();
+    g_smooth.resize(g_N * 3); g_det.resize(g_N * 3); g_out.resize(g_N * 3);
+    g_smooth_gen = make_unique<atomic<int>[]>(g_N);
+    g_det_gen = make_unique<atomic<int>[]>(g_N);
+    for (size_t p = 0; p < g_N; p++) {
+        g_smooth_gen[p].store(0, memory_order_relaxed);
+        g_det_gen[p].store(0, memory_order_relaxed);
     }
-
-    input_image = read_ppm_file(argv[1]);
-    HEIGHT = input_image->height;
-    WIDTH = input_image->width;
-
-    s1_buffer = allocate_image(WIDTH, HEIGHT);
-    s2_input = allocate_image(WIDTH, HEIGHT);
-    s2_buffer = allocate_image(WIDTH, HEIGHT);
-    s3_input = allocate_image(WIDTH, HEIGHT);
-    s3_output = allocate_image(WIDTH, HEIGHT);
-
-    cout << "=== Part 2.1 Variant 2: Threads + Atomic Ops ===" << endl;
-    cout << "Image: " << WIDTH << "x" << HEIGHT << endl;
-    cout << "S1: " << S1_ITERATIONS << " iters, pass every " << S1_PASS_EVERY << endl;
-    cout << "S2: " << S2_ITERATIONS << " iters per pass" << endl;
-    cout << "S3: " << S3_ITERATIONS << " iters per pass" << endl;
-
-    auto start = chrono::steady_clock::now();
-
-    thread t1(thread_S1);
-    thread t2(thread_S2);
-    thread t3(thread_S3);
-
-    t1.join();
-    t2.join();
-    t3.join();
-
-    auto end = chrono::steady_clock::now();
-
-    write_ppm_file(argv[2], s3_output);
-
-    cout << "Total time: " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " ms" << endl;
-    cout << "Verification checksums:" << endl;
-    cout << "  S1->S2 last checksum: " << s1_final_checksum.load() << endl;
-    cout << "  S2->S3 last checksum: " << s2_final_checksum.load() << endl;
-    cout << "  S3 output checksum:   " << s3_final_checksum.load() << endl;
-
-    free_image(s1_buffer);
-    free_image(s2_input);
-    free_image(s2_buffer);
-    free_image(s3_input);
-    free_image(s3_output);
-    free_image(input_image);
-
+    thread th1(s1_thread); thread th2(s2_thread); thread th3(s3_thread);
+    th1.join(); th2.join(); th3.join();
+    auto t_done = chrono::steady_clock::now();
+    write_flat(argv[2]);
+    auto t_write = chrono::steady_clock::now();
+    long long expect = (long long)g_N * 10;
+    if (g_verify_smooth.load() != expect || g_verify_det.load() != expect) {
+        cerr << "ORDER CHECK FAILED: smooth=" << g_verify_smooth.load()
+             << " det=" << g_verify_det.load() << " expect=" << expect << "\n";
+        return 1;
+    }
+    cout << "order verified: " << expect << " forwarded pixels received in sent order (S1->S2 and S2->S3)\n";
+    cout << "read: " << chrono::duration_cast<chrono::milliseconds>(t_read - t0).count() << " ms\n";
+    cout << "pipeline (S1x1000 S2x1000 S3x1000 nested, atomics): " << chrono::duration_cast<chrono::milliseconds>(t_done - t_read).count() << " ms\n";
+    cout << "write: " << chrono::duration_cast<chrono::milliseconds>(t_write - t_done).count() << " ms\n";
+    cout << "total: " << chrono::duration_cast<chrono::milliseconds>(t_write - t0).count() << " ms\n";
     return 0;
 }

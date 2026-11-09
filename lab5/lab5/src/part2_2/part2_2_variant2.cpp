@@ -1,182 +1,182 @@
-// Part 2.2 Variant 2: Multi-process + Pipes
-// S1 runs 1000 times, every 100th result -> S2 via pipe
-// S2 runs 100 times per input, every 100th result -> S3 via pipe
-// S3 runs 100 times per input, last result written to file
+// Part2_2 Variant2: 3 processes, pipes, variant 2.
+// S1 1000 runs, every 100th forwarded (10 x N packets).
+// S2 100 per forwarded (1000 runs), 100th forwarded (10 x N packets).
+// S3 100 per forwarded S2 (1000 runs), last written.
+// Order proof: seq per forwarded stream must be 0,1,2,... in order.
 #include <iostream>
+#include <fstream>
+#include <vector>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
-#include <chrono>
 #include <unistd.h>
 #include <sys/wait.h>
-#include "../common/libppm.h"
+#include <chrono>
+#include "libppm.h"
 
 using namespace std;
 
-#define S1_ITERATIONS 1000
-#define S1_PASS_EVERY 100
-#define S2_ITERATIONS 100
-#define S3_ITERATIONS 100
+struct Packet {
+    int32_t iter;
+    int32_t index;
+    int64_t seq;
+    uint8_t inp[3];
+    uint8_t payload[3];
+};
 
-void S1_smoothen(struct image_t *src, struct image_t *dst)
-{
-    int m = src->height, n = src->width;
-    for(int i = 0; i < m; i++)
-        for(int j = 0; j < n; j++)
-            for(int k = 0; k < 3; k++)
-                dst->image_pixels[i][j][k] = src->image_pixels[i][j][k];
-
-    for(int i = 1; i < m - 1; i++)
-        for(int j = 1; j < n - 1; j++)
-            for(int k = 0; k < 3; k++) {
-                int temp = 0;
-                for(int x = i - 1; x < i + 2; x++)
-                    for(int y = j - 1; y < j + 2; y++)
-                        temp += src->image_pixels[x][y][k];
-                dst->image_pixels[i][j][k] = temp / 9;
-            }
+static inline uint8_t s1_pixel(const uint8_t *inp, int W, int H, int i, int j, int k) {
+    if (i == 0 || i == H - 1 || j == 0 || j == W - 1)
+        return inp[(i * W + j) * 3 + k];
+    int t = 0;
+    for (int x = i - 1; x < i + 2; x++)
+        for (int y = j - 1; y < j + 2; y++)
+            t += inp[(x * W + y) * 3 + k];
+    return (uint8_t)(t / 9);
+}
+static inline uint8_t s2_pixel(uint8_t inp, uint8_t smo) {
+    int diff = (int)inp - (int)smo;
+    return (uint8_t)(int8_t)diff;
+}
+static inline uint8_t s3_pixel(uint8_t inp, uint8_t det) {
+    int v = (int)inp + (int8_t)det;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)v;
+}
+static bool write_all(int fd, const void *buf, size_t n) {
+    const char *p = (const char*)buf;
+    while (n > 0) { ssize_t w = write(fd, p, n); if (w <= 0) return false; p += w; n -= (size_t)w; }
+    return true;
+}
+static bool read_all(int fd, void *buf, size_t n) {
+    char *p = (char*)buf; size_t got = 0;
+    while (got < n) { ssize_t r = read(fd, p + got, n - got); if (r <= 0) return false; got += (size_t)r; }
+    return true;
 }
 
-void S2_find_details(struct image_t *orig, struct image_t *smooth, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int diff = (int)orig->image_pixels[i][j][k] - (int)smooth->image_pixels[i][j][k];
-                dst->image_pixels[i][j][k] = (uint8_t)(int8_t)diff;
-            }
-}
-
-void S3_sharpen(struct image_t *orig, struct image_t *details, struct image_t *dst)
-{
-    for(int i = 0; i < orig->height; i++)
-        for(int j = 0; j < orig->width; j++)
-            for(int k = 0; k < 3; k++) {
-                int val = (int)orig->image_pixels[i][j][k] + (int8_t)details->image_pixels[i][j][k];
-                if(val < 0) val = 0;
-                if(val > 255) val = 255;
-                dst->image_pixels[i][j][k] = (uint8_t)val;
-            }
-}
-
-void write_all(int fd, const void *buf, size_t n)
-{
-    const uint8_t *p = (const uint8_t *)buf;
-    while(n > 0) {
-        ssize_t w = write(fd, p, n);
-        if(w <= 0) { perror("write"); exit(1); }
-        p += w;
-        n -= w;
-    }
-}
-
-void read_all(int fd, void *buf, size_t n)
-{
-    uint8_t *p = (uint8_t *)buf;
-    while(n > 0) {
-        ssize_t r = read(fd, p, n);
-        if(r <= 0) { perror("read"); exit(1); }
-        p += r;
-        n -= r;
-    }
-}
-
-void send_image(int fd, struct image_t *img)
-{
-    uint8_t *flat = image_to_flat(img);
-    write_all(fd, flat, img->height * img->width * 3);
-    delete[] flat;
-}
-
-struct image_t* recv_image(int fd, int w, int h)
-{
-    int sz = h * w * 3;
-    uint8_t *flat = new uint8_t[sz];
-    read_all(fd, flat, sz);
-    struct image_t *img = flat_to_image(flat, w, h);
-    delete[] flat;
-    return img;
-}
-
-int main(int argc, char **argv)
-{
-    if(argc != 3) {
-        cout << "usage: ./part2_2_v2 <input.ppm> <output.ppm>" << endl;
-        exit(1);
-    }
+int main(int argc, char **argv) {
+    if (argc != 3) { cout << "usage: ./part2_2_variant2 <input> <output>\n"; return 0; }
+    auto t0 = chrono::steady_clock::now();
+    image_t *img = read_ppm_file(argv[1]);
+    int W = img->width, H = img->height;
+    size_t N = (size_t)W * H;
+    vector<uint8_t> inp(N * 3);
+    for (int i = 0; i < H; i++)
+        for (int j = 0; j < W; j++)
+            for (int k = 0; k < 3; k++)
+                inp[((size_t)i * W + j) * 3 + k] = img->image_pixels[i][j][k];
+    auto t_read = chrono::steady_clock::now();
 
     int pipe1[2], pipe2[2];
-    if(pipe(pipe1) < 0 || pipe(pipe2) < 0) {
-        perror("pipe"); exit(1);
-    }
-
-    struct image_t *input_image = read_ppm_file(argv[1]);
-    int H = input_image->height, W = input_image->width;
-
-    cout << "=== Part 2.2 Variant 2: Processes + Pipes ===" << endl;
-    cout << "Image: " << W << "x" << H << endl;
-
-    auto start = chrono::steady_clock::now();
+    if (pipe(pipe1) != 0 || pipe(pipe2) != 0) { perror("pipe"); return 1; }
 
     pid_t pid1 = fork();
-    if(pid1 == 0) {
-        // S1 process
+    if (pid1 < 0) { perror("fork1"); return 1; }
+    if (pid1 == 0) {
         close(pipe1[0]); close(pipe2[0]); close(pipe2[1]);
-        struct image_t *s1_out = allocate_image(W, H);
-        for(int iter = 1; iter <= S1_ITERATIONS; iter++) {
-            S1_smoothen(input_image, s1_out);
-            if(iter % S1_PASS_EVERY == 0) {
-                send_image(pipe1[1], s1_out);
+        int64_t seq = 0;
+        for (int run = 1; run <= 1000; run++) {
+            bool fwd = (run % 100 == 0);
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    size_t p = (size_t)i * W + j;
+                    uint8_t smo[3];
+                    for (int k = 0; k < 3; k++) smo[k] = s1_pixel(inp.data(), W, H, i, j, k);
+                    if (fwd) {
+                        Packet pkt; pkt.iter = run; pkt.index = (int32_t)p; pkt.seq = seq++;
+                        for (int k = 0; k < 3; k++) { pkt.inp[k] = inp[p * 3 + k]; pkt.payload[k] = smo[k]; }
+                        if (!write_all(pipe1[1], &pkt, sizeof(pkt))) _exit(1);
+                    }
+                }
             }
         }
         close(pipe1[1]);
-        exit(0);
+        _exit(0);
     }
 
     pid_t pid2 = fork();
-    if(pid2 == 0) {
-        // S2 process
+    if (pid2 < 0) { perror("fork2"); return 1; }
+    if (pid2 == 0) {
         close(pipe1[1]); close(pipe2[0]);
-        struct image_t *s2_out = allocate_image(W, H);
-        int num_passes = S1_ITERATIONS / S1_PASS_EVERY;  // 10
-        for(int p = 0; p < num_passes; p++) {
-            struct image_t *s1_result = recv_image(pipe1[0], W, H);
-            for(int iter = 1; iter <= S2_ITERATIONS; iter++) {
-                S2_find_details(input_image, s1_result, s2_out);
+        int64_t expect = 0;
+        for (int g = 1; g <= 10; g++) {
+            vector<Packet> group(N);
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    Packet pkt;
+                    if (!read_all(pipe1[0], &pkt, sizeof(pkt))) _exit(1);
+                    if (pkt.seq != expect) { cerr << "S2 ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n"; _exit(1); }
+                    expect++;
+                    size_t p = (size_t)i * W + j;
+                    group[p] = pkt;
+                }
             }
-            // Pass last result of S2 to S3
-            send_image(pipe2[1], s2_out);
-            free_image(s1_result);
+            for (int run = 1; run <= 100; run++) {
+                bool fwd = (run == 100);
+                for (int i = 0; i < H; i++) {
+                    for (int j = 0; j < W; j++) {
+                        size_t p = (size_t)i * W + j;
+                        Packet out; out.iter = g; out.index = group[p].index; out.seq = group[p].seq;
+                        for (int k = 0; k < 3; k++) {
+                            out.inp[k] = group[p].inp[k];
+                            out.payload[k] = s2_pixel(group[p].inp[k], group[p].payload[k]);
+                        }
+                        if (fwd) if (!write_all(pipe2[1], &out, sizeof(out))) _exit(1);
+                    }
+                }
+            }
         }
         close(pipe1[0]); close(pipe2[1]);
-        exit(0);
+        _exit(0);
     }
 
-    // Parent: S3 process
     close(pipe1[0]); close(pipe1[1]); close(pipe2[1]);
-    struct image_t *s3_out = allocate_image(W, H);
-    int num_passes = S1_ITERATIONS / S1_PASS_EVERY;
-    for(int p = 0; p < num_passes; p++) {
-        struct image_t *s2_result = recv_image(pipe2[0], W, H);
-        for(int iter = 1; iter <= S3_ITERATIONS; iter++) {
-            S3_sharpen(input_image, s2_result, s3_out);
+    vector<uint8_t> out(N * 3, 0);
+    int64_t expect = 0;
+    for (int g = 1; g <= 10; g++) {
+        vector<Packet> group(N);
+        for (int i = 0; i < H; i++) {
+            for (int j = 0; j < W; j++) {
+                Packet pkt;
+                if (!read_all(pipe2[0], &pkt, sizeof(pkt))) { cerr << "S3 read fail\n"; return 1; }
+                if (pkt.seq != expect) { cerr << "S3 ORDER FAIL seq=" << pkt.seq << " expect=" << expect << "\n"; return 1; }
+                expect++;
+                size_t p = (size_t)i * W + j;
+                group[p] = pkt;
+            }
         }
-        free_image(s2_result);
+        for (int run = 1; run <= 100; run++) {
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < W; j++) {
+                    size_t p = (size_t)i * W + j;
+                    for (int k = 0; k < 3; k++) {
+                        uint8_t v = s3_pixel(group[p].inp[k], group[p].payload[k]);
+                        if (g == 10 && run == 100) out[p * 3 + k] = v;
+                    }
+                }
+            }
+        }
     }
     close(pipe2[0]);
-
-    waitpid(pid1, NULL, 0);
-    waitpid(pid2, NULL, 0);
-
-    auto end = chrono::steady_clock::now();
-
-    write_ppm_file(argv[2], s3_out);
-
-    cout << "Total time: " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " ms" << endl;
-    cout << "Verification: Pipe FIFO guarantees sequential row ordering." << endl;
-
-    free_image(s3_out);
-    free_image(input_image);
-
+    int st1, st2;
+    waitpid(pid1, &st1, 0); waitpid(pid2, &st2, 0);
+    if (!WIFEXITED(st1) || WEXITSTATUS(st1) != 0 || !WIFEXITED(st2) || WEXITSTATUS(st2) != 0) {
+        cerr << "child failed\n"; return 1;
+    }
+    auto t_done = chrono::steady_clock::now();
+    ofstream ws(argv[2], ios::binary | ios::out);
+    if (!ws.is_open()) { cerr << "failed to open file " << argv[2] << "\n"; return 1; }
+    ws.write("P6\n", 3);
+    string w = to_string(W); ws.write(w.c_str(), (streamsize)w.length()); ws.write(" ", 1);
+    string h = to_string(H); ws.write(h.c_str(), (streamsize)h.length());
+    ws.write("\n255\n", 5);
+    ws.write(reinterpret_cast<const char*>(out.data()), (streamsize)(N * 3));
+    ws.close();
+    auto t_write = chrono::steady_clock::now();
+    long long total = (long long)N * 10;
+    cout << "order verified: " << total << " forwarded packets received in sent order (S1->S2, S2->S3)\n";
+    cout << "read: " << chrono::duration_cast<chrono::milliseconds>(t_read - t0).count() << " ms\n";
+    cout << "pipeline (S1x1000 S2x1000 S3x1000 nested, pipes): " << chrono::duration_cast<chrono::milliseconds>(t_done - t_read).count() << " ms\n";
+    cout << "write: " << chrono::duration_cast<chrono::milliseconds>(t_write - t_done).count() << " ms\n";
+    cout << "total: " << chrono::duration_cast<chrono::milliseconds>(t_write - t0).count() << " ms\n";
     return 0;
 }
