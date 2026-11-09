@@ -1,6 +1,7 @@
 CC = g++
 CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -g -Isrc/common
-LDFLAGS = -pthread -lrt
+LDFLAGS = -pthread
+LDLIBS_RT = -lrt
 
 INPUT ?= images/input.ppm
 HOST  ?= 127.0.0.1
@@ -72,21 +73,21 @@ part2_2_variant2: $(BINDIR)/part2_2_variant2
 	./$(BINDIR)/part2_2_variant2 $(INPUT) output_part2_2_variant2.ppm
 
 $(BINDIR)/part2_3: src/part2_3/part2_3.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
-	$(CC) $(CXXFLAGS) src/part2_3/part2_3.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3 $(LDFLAGS)
+	$(CC) $(CXXFLAGS) src/part2_3/part2_3.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3 $(LDFLAGS) $(LDLIBS_RT)
 
 part2_3: $(BINDIR)/part2_3
 	./$(BINDIR)/part2_3 $(INPUT) output_part2_3.ppm
 	cp output_part2_3.ppm output_part2_3_variant1.ppm
 
 $(BINDIR)/part2_3_variant1: src/part2_3/part2_3_variant1.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
-	$(CC) $(CXXFLAGS) src/part2_3/part2_3_variant1.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3_variant1 $(LDFLAGS)
+	$(CC) $(CXXFLAGS) src/part2_3/part2_3_variant1.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3_variant1 $(LDFLAGS) $(LDLIBS_RT)
 
 part2_3_variant1: $(BINDIR)/part2_3_variant1
 	./$(BINDIR)/part2_3_variant1 $(INPUT) output_part2_3_variant1.ppm
 	cp output_part2_3_variant1.ppm output_part2_3.ppm
 
 $(BINDIR)/part2_3_variant2: src/part2_3/part2_3_variant2.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
-	$(CC) $(CXXFLAGS) src/part2_3/part2_3_variant2.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3_variant2 $(LDFLAGS)
+	$(CC) $(CXXFLAGS) src/part2_3/part2_3_variant2.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3_variant2 $(LDFLAGS) $(LDLIBS_RT)
 
 part2_3_variant2: $(BINDIR)/part2_3_variant2
 	./$(BINDIR)/part2_3_variant2 $(INPUT) output_part2_3_variant2.ppm
