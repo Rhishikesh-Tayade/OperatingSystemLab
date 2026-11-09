@@ -1,6 +1,3 @@
-// Part3_2 Variant1 B (client, S2+S3 on B). Receives smooth stream,
-// runs S2 then S3 per pixel for 1000 iters, writes last.
-// Usage: <ip_of_A> <port> <output.ppm>
 #include <iostream>
 #include <fstream>
 #include <vector>

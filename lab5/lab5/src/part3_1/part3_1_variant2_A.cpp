@@ -1,5 +1,3 @@
-// Part3_1 Variant2 A (server, S1+S2 on A). S1 1000 ->10, S2 100 per ->10.
-// Sends 10xN details packets to B. Usage: <input.ppm> <port>
 #include <iostream>
 #include <vector>
 #include <cstdint>
@@ -71,7 +69,7 @@ int main(int argc, char **argv) {
     if (!send_all(cli, wh, sizeof(wh))) { cerr << "send header failed\n"; return 1; }
 
     int64_t seq = 0;
-    // S1: 1000 runs, every 100th kept. Store smooth group per g.
+
     for (int g = 1; g <= 10; g++) {
         vector<uint8_t> smo_grp(N * 3);
         for (int run = 1; run <= 100; run++) {
@@ -86,7 +84,7 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        // S2: 100 runs on this smo_grp, 100th forwarded.
+
         for (int run = 1; run <= 100; run++) {
             bool fwd = (run == 100);
             for (int i = 0; i < H; i++) {

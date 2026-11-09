@@ -1,15 +1,3 @@
-// Part2_1 Variant1: 3 threads, atomic operations, variant 1.
-// Pipeline: S1 (smoothen) -> S2 (details) -> S3 (sharpen).
-// Variant 1: 1000 linked iterations. Input image is read once.
-// Iteration r: S1_r(input) -> S2_r(input, S1_r) -> S3_r(input, S2_r).
-// S3_1000 result is written. Since S1/S2/S3 are deterministic on the
-// same input, the final output equals the Part I output.
-// Streaming: pixels are forwarded per-pixel as soon as they are ready,
-// never waiting for the whole image.
-// Order proof: every pixel carries (iter, index). S2 spins until
-// smooth_ready[p]==iter (acquire) and S3 until det_ready[p]==iter,
-// processing pixels in strict 0..N-1 order. Atomic verify counters
-// count pixels received; main thread checks they equal N*1000.
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -61,7 +49,7 @@ static const int kIters = 1000;
 
 static void s1_thread() {
     for (int iter = 1; iter <= kIters; iter++) {
-        // iteration barrier: do not overwrite smooth buffer until S2 finished prev iter
+
         while (g_s2_done.load(memory_order_acquire) < iter - 1) {
         }
         for (int i = 0; i < g_H; i++) {
@@ -78,14 +66,14 @@ static void s1_thread() {
 
 static void s2_thread() {
     for (int iter = 1; iter <= kIters; iter++) {
-        // iteration barrier: do not overwrite det buffer until S3 finished prev iter
+
         while (g_s3_done.load(memory_order_acquire) < iter - 1) {
         }
         for (int i = 0; i < g_H; i++) {
             for (int j = 0; j < g_W; j++) {
                 size_t p = (size_t)i * g_W + j;
                 while (g_smooth_ready[p].load(memory_order_acquire) != iter) {
-                    // spin wait - atomic synchronization
+
                 }
                 for (int k = 0; k < 3; k++) {
                     g_det[p * 3 + k] = s2_pixel(g_inp[p * 3 + k], g_smooth[p * 3 + k]);

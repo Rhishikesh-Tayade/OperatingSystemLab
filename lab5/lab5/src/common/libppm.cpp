@@ -4,7 +4,7 @@
 
 using namespace std;
 
-uint8_t skip_blanks_comments_while_reading(ifstream *read_stream) //returns the byte at the first position after the skipping of the blank space
+uint8_t skip_blanks_comments_while_reading(ifstream *read_stream)
 {
 	uint8_t val;
 	while(true)
@@ -37,10 +37,9 @@ struct image_t* read_ppm_file(char* path_to_input_file)
 		image->width = 0;
 		image->height = 0;
 
-		uint8_t val = skip_blanks_comments_while_reading(&read_stream); // 'P'
-		val = read_stream.get(); //'6'
+		uint8_t val = skip_blanks_comments_while_reading(&read_stream);
+		val = read_stream.get();
 
-		// width
 		val = skip_blanks_comments_while_reading(&read_stream);
 		while(true)
 		{
@@ -50,7 +49,6 @@ struct image_t* read_ppm_file(char* path_to_input_file)
 			val = read_stream.get();
 		}
 
-		// height
 		val = skip_blanks_comments_while_reading(&read_stream);
 		while(true)
 		{
@@ -68,7 +66,6 @@ struct image_t* read_ppm_file(char* path_to_input_file)
 				image->image_pixels[i][j] = new uint8_t[3];
 		}
 
-		// maxval
 		val = skip_blanks_comments_while_reading(&read_stream);
 		while(true)
 		{
@@ -77,7 +74,6 @@ struct image_t* read_ppm_file(char* path_to_input_file)
 			val = read_stream.get();
 		}
 
-		// get pixel values
 		val = skip_blanks_comments_while_reading(&read_stream);
 		for(int i = 0; i < image->height; i++)
 		{
@@ -86,7 +82,7 @@ struct image_t* read_ppm_file(char* path_to_input_file)
 				for(int k = 0; k < 3; k++)
 				{
 					image->image_pixels[i][j][k] = val;
-					val = read_stream.get(); //assuming maxval of <=255
+					val = read_stream.get();
 				}
 			}
 		}
@@ -121,7 +117,7 @@ void write_ppm_file(char * path_to_output_file, struct image_t* image)
 			{
 				for(int k = 0; k < 3; k++)
 				{
-					write_stream.put(image->image_pixels[i][j][k]); //assuming maxval of <=255
+					write_stream.put(image->image_pixels[i][j][k]);
 				}
 			}
 		}

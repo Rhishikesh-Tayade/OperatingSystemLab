@@ -1,11 +1,3 @@
-// Part2_1 Variant2: 3 threads, atomic operations, variant 2.
-// S1 runs 1000 times, every 100th forwarded (10 forwards).
-// Per forwarded S1 result, S2 runs 100 times, 100th forwarded (10 forwards).
-// Per forwarded S2 result, S3 runs 100 times, last run written.
-// Totals: S1=1000 runs, S2=1000 runs, S3=1000 runs. Deterministic, so
-// final output equals Part I. Pixels stream per-pixel via atomics.
-// Order proof: seq numbers per forwarded group; consumers spin on
-// atomic generation flags and verify strict order + counts.
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -45,7 +37,7 @@ static vector<uint8_t> g_det;
 static vector<uint8_t> g_out;
 static int g_W = 0, g_H = 0;
 static size_t g_N = 0;
-static unique_ptr<atomic<int>[]> g_smooth_gen; // generation g=1..10 when published
+static unique_ptr<atomic<int>[]> g_smooth_gen;
 static unique_ptr<atomic<int>[]> g_det_gen;
 static atomic<int> g_s2_consumed{0};
 static atomic<int> g_s3_consumed{0};

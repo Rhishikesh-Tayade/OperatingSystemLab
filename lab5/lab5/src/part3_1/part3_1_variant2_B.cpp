@@ -1,5 +1,3 @@
-// Part3_1 Variant2 B (client, S3 on B). Receives 10xN details, S3 100 per
-// forwarded (1000 runs), last written. Usage: <ip_of_A> <port> <output.ppm>
 #include <iostream>
 #include <fstream>
 #include <vector>

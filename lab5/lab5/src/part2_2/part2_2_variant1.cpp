@@ -1,9 +1,3 @@
-// Part2_2 Variant1: 3 processes, pipes, variant 1.
-// S1 (child) reads file once, streams packets to S2 via pipe1.
-// S2 streams to S3 (parent) via pipe2. S3 writes S3_1000 output.
-// 1000 linked iterations; pixels stream per-pixel (no whole-image wait).
-// Order proof: each packet carries seq (0..N*1000-1) + iter + index.
-// Receivers verify seq is strictly increasing by 1; any gap = failure.
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -84,7 +78,7 @@ int main(int argc, char **argv) {
     pid_t pid1 = fork();
     if (pid1 < 0) { perror("fork1"); return 1; }
     if (pid1 == 0) {
-        // S1 child
+
         close(pipe1[0]); close(pipe2[0]); close(pipe2[1]);
         int64_t seq = 0;
         for (int iter = 1; iter <= 1000; iter++) {
@@ -110,7 +104,7 @@ int main(int argc, char **argv) {
     pid_t pid2 = fork();
     if (pid2 < 0) { perror("fork2"); return 1; }
     if (pid2 == 0) {
-        // S2 child
+
         close(pipe1[1]); close(pipe2[0]);
         int64_t expect = 0;
         for (int iter = 1; iter <= 1000; iter++) {
@@ -137,7 +131,6 @@ int main(int argc, char **argv) {
         _exit(0);
     }
 
-    // Parent = S3
     close(pipe1[0]); close(pipe1[1]); close(pipe2[1]);
     vector<uint8_t> out(N * 3, 0);
     int64_t expect = 0;

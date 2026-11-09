@@ -1,5 +1,3 @@
-// Part3_2 Variant2 A (server, S1 only on A). S1 1000 ->10 forwarded smooth.
-// Usage: <input.ppm> <port>
 #include <iostream>
 #include <vector>
 #include <cstdint>

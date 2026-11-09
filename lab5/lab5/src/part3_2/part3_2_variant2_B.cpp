@@ -1,6 +1,3 @@
-// Part3_2 Variant2 B (client, S2+S3 on B). Receives 10xN smooth,
-// S2 100 per forwarded ->10, S3 100 per forwarded -> last written.
-// Usage: <ip_of_A> <port> <output.ppm>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -66,7 +63,7 @@ int main(int argc, char **argv) {
                 group[p] = pkt;
             }
         }
-        // S2: 100 runs, keep 100th
+
         vector<uint8_t> det_grp(N * 3);
         for (int run = 1; run <= 100; run++) {
             bool fwd = (run == 100);
@@ -80,7 +77,7 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        // S3: 100 runs on det_grp, last written
+
         for (int run = 1; run <= 100; run++) {
             for (int i = 0; i < H; i++) {
                 for (int j = 0; j < W; j++) {

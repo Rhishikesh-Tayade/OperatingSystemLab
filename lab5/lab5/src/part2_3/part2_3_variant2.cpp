@@ -1,6 +1,3 @@
-// Part2_3 Variant2: 3 processes, shared memory, semaphores, variant 2.
-// S1 1000 runs -> 10 forwarded (10xN packets). S2 100 per forwarded ->
-// 10 forwarded. S3 100 per forwarded -> last written. Sync via semaphores only.
 #include <iostream>
 #include <fstream>
 #include <vector>

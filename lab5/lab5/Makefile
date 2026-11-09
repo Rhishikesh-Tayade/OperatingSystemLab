@@ -39,14 +39,12 @@ all:
 $(BINDIR):
 	mkdir -p $(BINDIR)
 
-# ---- Part I ----
 $(BINDIR)/part1: src/part1/image_sharpener.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
 	$(CC) $(CXXFLAGS) src/part1/image_sharpener.cpp $(COMMON_SRC) -o $(BINDIR)/part1 $(LDFLAGS)
 
 part1: $(BINDIR)/part1
 	./$(BINDIR)/part1 $(INPUT) output_part1.ppm
 
-# ---- Part II.1 threads ----
 $(BINDIR)/part2_1_variant1: src/part2_1/part2_1_variant1.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
 	$(CC) $(CXXFLAGS) src/part2_1/part2_1_variant1.cpp $(COMMON_SRC) -o $(BINDIR)/part2_1_variant1 $(LDFLAGS)
 
@@ -61,7 +59,6 @@ part2_1_variant2: $(BINDIR)/part2_1_variant2
 	./$(BINDIR)/part2_1_variant2 $(INPUT) output_part2_1_variant2.ppm
 	cp output_part2_1_variant2.ppm output_part2_2_variant2.ppm
 
-# ---- Part II.2 pipes ----
 $(BINDIR)/part2_2_variant1: src/part2_2/part2_2_variant1.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
 	$(CC) $(CXXFLAGS) src/part2_2/part2_2_variant1.cpp $(COMMON_SRC) -o $(BINDIR)/part2_2_variant1 $(LDFLAGS)
 
@@ -74,7 +71,6 @@ $(BINDIR)/part2_2_variant2: src/part2_2/part2_2_variant2.cpp $(COMMON_SRC) $(COM
 part2_2_variant2: $(BINDIR)/part2_2_variant2
 	./$(BINDIR)/part2_2_variant2 $(INPUT) output_part2_2_variant2.ppm
 
-# ---- Part II.3 shared memory + semaphores ----
 $(BINDIR)/part2_3: src/part2_3/part2_3.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
 	$(CC) $(CXXFLAGS) src/part2_3/part2_3.cpp $(COMMON_SRC) -o $(BINDIR)/part2_3 $(LDFLAGS)
 
@@ -95,7 +91,6 @@ $(BINDIR)/part2_3_variant2: src/part2_3/part2_3_variant2.cpp $(COMMON_SRC) $(COM
 part2_3_variant2: $(BINDIR)/part2_3_variant2
 	./$(BINDIR)/part2_3_variant2 $(INPUT) output_part2_3_variant2.ppm
 
-# ---- Part III sockets ----
 $(BINDIR)/part3_1_variant1_A: src/part3_1/part3_1_variant1_A.cpp $(COMMON_SRC) $(COMMON_HDR) | $(BINDIR)
 	$(CC) $(CXXFLAGS) src/part3_1/part3_1_variant1_A.cpp $(COMMON_SRC) -o $(BINDIR)/part3_1_variant1_A $(LDFLAGS)
 

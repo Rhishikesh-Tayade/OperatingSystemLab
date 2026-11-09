@@ -1,8 +1,3 @@
-// Part3_1 Variant1 A (server, S1+S2 on computer A).
-// Usage: ./part3_1_variant1_A <input.ppm> <port>
-// Reads image once, runs 1000 linked S1+S2 iterations, streams
-// (inp+details) packets to B over TCP. B does S3+write.
-// Order proof: seq 0..N*1000-1 checked by B.
 #include <iostream>
 #include <vector>
 #include <cstdint>

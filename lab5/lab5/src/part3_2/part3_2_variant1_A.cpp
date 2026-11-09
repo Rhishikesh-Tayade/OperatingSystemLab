@@ -1,5 +1,3 @@
-// Part3_2 Variant1 A (server, S1 only on A). Sends smooth stream to B.
-// Usage: ./part3_2_variant1_A <input.ppm> <port]
 #include <iostream>
 #include <vector>
 #include <cstdint>

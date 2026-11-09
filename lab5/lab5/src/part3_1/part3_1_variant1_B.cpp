@@ -1,6 +1,3 @@
-// Part3_1 Variant1 B (client, S3 on computer B).
-// Usage: ./part3_1_variant1_B <ip_of_A> <port> <output.ppm>
-// Receives (inp+details) stream, runs S3 for 1000 iters, writes S3_1000.
 #include <iostream>
 #include <fstream>
 #include <vector>

@@ -20,7 +20,6 @@ struct image_t* S1_smoothen(struct image_t *input_image)
 
 	int m = input_image->height, n = input_image->width;
 
-	// Copy border pixels from input image
 	for(int i = 0 ; i < m ; i++) {
 		for(int j = 0 ; j < n ; j++) {
 			for(int k = 0 ; k < 3 ; k++) {

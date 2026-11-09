@@ -1,8 +1,3 @@
-// Part2_2 Variant2: 3 processes, pipes, variant 2.
-// S1 1000 runs, every 100th forwarded (10 x N packets).
-// S2 100 per forwarded (1000 runs), 100th forwarded (10 x N packets).
-// S3 100 per forwarded S2 (1000 runs), last written.
-// Order proof: seq per forwarded stream must be 0,1,2,... in order.
 #include <iostream>
 #include <fstream>
 #include <vector>

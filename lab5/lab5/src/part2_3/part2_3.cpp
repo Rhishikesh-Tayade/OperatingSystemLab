@@ -1,7 +1,3 @@
-// Part2_3 Variant1: 3 processes, shared memory, semaphores, variant 1.
-// 1000 linked iterations, pixels stream via two bounded shared queues.
-// Synchronization: ONLY semaphores (full/empty per queue, pshared=1).
-// Order proof: seq in each packet must be 0,1,2,...; consumer verifies.
 #include <iostream>
 #include <fstream>
 #include <vector>
